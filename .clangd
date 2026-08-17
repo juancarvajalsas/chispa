@@ -1,0 +1,21 @@
+# Point clangd at the CMake-generated database in build/.
+# CMAKE_EXPORT_COMPILE_COMMANDS=ON writes build/compile_commands.json.
+CompileFlags:
+  CompilationDatabase: build
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+    Remove:
+      # Vulkan's C API is all raw pointers and out-params; these two fire
+      # constantly on correct code.
+      - bugprone-easily-swappable-parameters
+      - performance-no-int-to-ptr
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes

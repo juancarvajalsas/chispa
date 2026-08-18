@@ -58,7 +58,7 @@ VkPipeline graphicsPipeline;
 VkCommandPool commandPool;
 VkCommandBuffer commandBuffer;
 VkSemaphore imageAvailableSemaphore;
-VkSemaphore renderFinishedSemaphore;
+std::vector<VkSemaphore> renderFinishedSemaphore;
 VkFence inFlighFence;
 
 struct QueueFamilyIndices {
@@ -542,9 +542,14 @@ void createLogicalDevice() {
 	createInfo.enabledExtensionCount = (uint32_t)deviceExtensions.size();
 	createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
+	VkPhysicalDeviceSynchronization2Features sync2{};
+	sync2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+	sync2.synchronization2 = VK_TRUE;
+
 	VkPhysicalDeviceDynamicRenderingFeatures dynamicRendering{};
 	dynamicRendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
 	dynamicRendering.dynamicRendering = VK_TRUE;
+	dynamicRendering.pNext = &sync2;
 
 	createInfo.pNext = &dynamicRendering;
 
@@ -597,12 +602,153 @@ void createSyncObjects() {
 	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
 	if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-		vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
 		vkCreateFence(device, &fenceInfo, nullptr, &inFlighFence) != VK_SUCCESS) {
 		printf("Failed to create sync objects!\n");
 		exit(1);
 	}
+
+	renderFinishedSemaphore.resize(swapChainImages.size());
+	for (size_t i = 0; i < swapChainImages.size(); i++) {
+		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore[i]) != VK_SUCCESS) {
+			printf("Failed to create render-finished semaphore %zu!\n", i);
+			exit(1);
+		}
+	}
 	printf("Sync objects created.\n");
+}
+
+void transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+	VkImageMemoryBarrier2 barrier{};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+	barrier.srcStageMask = srcStage;
+	barrier.srcAccessMask = srcAccess;
+	barrier.dstStageMask = dstStage;
+	barrier.dstAccessMask = dstAccess;
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.layerCount = 1;
+
+	VkDependencyInfo depInfo{};
+	depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+	depInfo.imageMemoryBarrierCount = 1;
+	depInfo.pImageMemoryBarriers = &barrier;
+
+	vkCmdPipelineBarrier2(cmd, &depInfo);
+}
+
+void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
+	VkCommandBufferBeginInfo beginInfo{};
+	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
+		printf("Failed to begin command buffer!\n");
+		exit(1);
+	}
+
+	transitionImageLayout(cmd, swapChainImages[imageIndex],
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
+	);
+
+	VkRenderingAttachmentInfo colorAttachment{};
+	colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+	colorAttachment.imageView = swapChainImageViews[imageIndex];
+	colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	colorAttachment.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+
+	VkRenderingInfo renderInfo{};
+	renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+	renderInfo.renderArea.offset = {0,0};
+	renderInfo.renderArea.extent = swapChainExtent;
+	renderInfo.layerCount = 1;
+	renderInfo.colorAttachmentCount = 1;
+	renderInfo.pColorAttachments = &colorAttachment;
+
+	vkCmdBeginRendering(cmd, &renderInfo);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+	
+	VkViewport viewport{};
+	viewport.x = 0.0f;
+	viewport.y = 0.0f;
+	viewport.width = (float)swapChainExtent.width;
+	viewport.height = (float)swapChainExtent.height;
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+	VkRect2D scissor{};
+	scissor.offset = {0,0};
+	scissor.extent = swapChainExtent;
+	vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+	vkCmdDraw(cmd, 3, 1, 0, 0);
+
+	vkCmdEndRendering(cmd);
+
+	transitionImageLayout(cmd, swapChainImages[imageIndex],
+		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+		VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0
+	);
+
+	if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+		printf("Failed to end command buffer!\n");
+		exit(1);
+	}
+}
+
+void drawFrame() {
+	vkWaitForFences(device, 1, &inFlighFence, VK_TRUE, UINT64_MAX);
+	vkResetFences(device, 1, &inFlighFence);
+
+	uint32_t imageIndex;
+	vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+	vkResetCommandBuffer(commandBuffer, 0);
+	recordCommandBuffer(commandBuffer, imageIndex);
+
+	VkSemaphoreSubmitInfo waitSem{};
+	waitSem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+	waitSem.semaphore = imageAvailableSemaphore;
+	waitSem.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+	VkSemaphoreSubmitInfo signalSem{};
+	signalSem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+	signalSem.semaphore = renderFinishedSemaphore[imageIndex];
+	signalSem.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+	VkCommandBufferSubmitInfo cmdInfo{};
+	cmdInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+	cmdInfo.commandBuffer = commandBuffer;
+
+	VkSubmitInfo2 submit{};
+	submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+	submit.waitSemaphoreInfoCount = 1;
+	submit.pWaitSemaphoreInfos = &waitSem;
+	submit.signalSemaphoreInfoCount = 1;
+	submit.pSignalSemaphoreInfos = &signalSem;
+	submit.commandBufferInfoCount = 1;
+	submit.pCommandBufferInfos = &cmdInfo;
+
+	if (vkQueueSubmit2(graphicsQueue, 1, &submit, inFlighFence) != VK_SUCCESS) {
+		printf("Failed to submit draw!\n");
+		exit(1);
+	}
+
+	VkPresentInfoKHR presentInfo{};
+	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	presentInfo.waitSemaphoreCount = 1;
+	presentInfo.pWaitSemaphores = &renderFinishedSemaphore[imageIndex];
+	presentInfo.swapchainCount = 1;
+	presentInfo.pSwapchains = &swapChain;
+	presentInfo.pImageIndices = &imageIndex;
+
+	vkQueuePresentKHR(presentQueue, &presentInfo);
 }
 
 int main() {
@@ -637,10 +783,15 @@ int main() {
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+		drawFrame();
 	}
 
+	vkDeviceWaitIdle(device);
+
 	vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-	vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+	for (auto sem : renderFinishedSemaphore) {
+		vkDestroySemaphore(device, sem, nullptr);
+	}
 	vkDestroyFence(device, inFlighFence, nullptr);
 	vkDestroyCommandPool(device, commandPool, nullptr);
 	vkDestroyPipeline(device, graphicsPipeline, nullptr);

@@ -55,6 +55,11 @@ VkFormat swapChainImageFormat;
 VkExtent2D swapChainExtent;
 VkPipelineLayout pipelineLayout;
 VkPipeline graphicsPipeline;
+VkCommandPool commandPool;
+VkCommandBuffer commandBuffer;
+VkSemaphore imageAvailableSemaphore;
+VkSemaphore renderFinishedSemaphore;
+VkFence inFlighFence;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -554,6 +559,52 @@ void createLogicalDevice() {
 	printf("Logical device created, queues retrieved.\n");
 }
 
+void createCommandPool() {
+	QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+	VkCommandPoolCreateInfo poolInfo{};
+	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	poolInfo.queueFamilyIndex = indices.graphicsFamily.value();
+
+	if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+		printf("Failed to create command pool!\n");
+		exit(1);
+	}
+	printf("Command pool created\n");
+}
+
+void createCommandBuffer() {
+	VkCommandBufferAllocateInfo allocInfo{};
+	allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	allocInfo.commandPool = commandPool;
+	allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	allocInfo.commandBufferCount = 1;
+
+	if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+		printf("Failed to allocate command buffer!\n");
+		exit(1);
+	}
+	printf("Command buffer allocated!\n");
+}
+
+void createSyncObjects() {
+	VkSemaphoreCreateInfo semaphoreInfo{};
+	semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+	
+	VkFenceCreateInfo fenceInfo{};
+	fenceInfo.sType =VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+	if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
+		vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
+		vkCreateFence(device, &fenceInfo, nullptr, &inFlighFence) != VK_SUCCESS) {
+		printf("Failed to create sync objects!\n");
+		exit(1);
+	}
+	printf("Sync objects created.\n");
+}
+
 int main() {
 	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 	
@@ -580,11 +631,18 @@ int main() {
 	createSwapChain();
 	createImageViews();
 	createGraphicsPipeline();
+	createCommandPool();
+	createCommandBuffer();
+	createSyncObjects();
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 
+	vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
+	vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+	vkDestroyFence(device, inFlighFence, nullptr);
+	vkDestroyCommandPool(device, commandPool, nullptr);
 	vkDestroyPipeline(device, graphicsPipeline, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 

@@ -53,6 +53,8 @@ VkSwapchainKHR swapChain;
 std::vector<VkImage> swapChainImages;
 VkFormat swapChainImageFormat;
 VkExtent2D swapChainExtent;
+VkPipelineLayout pipelineLayout;
+VkPipeline graphicsPipeline;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -103,17 +105,126 @@ VkShaderModule createShaderModule(const std::vector<char>& code) {
 	return shaderModule;
 }
 
-void testShaderLoading() {
+void createGraphicsPipeline() {
 	auto vertCode = readFile("shaders/triangle.vert.spv");
 	auto fragCode = readFile("shaders/triangle.frag.spv");
-	printf("Loaded vert shader: %zu bytes, frag shader: %zu bytes\n", vertCode.size(), fragCode.size());
-
 	VkShaderModule vert = createShaderModule(vertCode);
 	VkShaderModule frag = createShaderModule(fragCode);
-	printf("Shader modules created succesfully!\n");
+
+	// -- Stage 1 Shader stages
+	VkPipelineShaderStageCreateInfo vertStage{};
+	vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	vertStage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+	vertStage.module = vert;
+	vertStage.pName = "main";
+	
+	VkPipelineShaderStageCreateInfo fragStage{};
+	fragStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	fragStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	fragStage.module = frag;
+	fragStage.pName = "main";
+
+	VkPipelineShaderStageCreateInfo stages[] = {vertStage, fragStage};
+
+	// -- Stage 2 Vertex input - EMPTY
+	VkPipelineVertexInputStateCreateInfo vertexInput{};
+	vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vertexInput.vertexBindingDescriptionCount = 0;
+	vertexInput.vertexAttributeDescriptionCount = 0;
+
+	// -- Stage 3 input assembly
+	VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+	inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+	inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+	// -- Stage 4 viewport and scissor
+	VkPipelineViewportStateCreateInfo viewportState{};
+	viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+	viewportState.viewportCount = 1;
+	viewportState.scissorCount = 1;
+
+	// -- Stage 5 rasterizer
+	VkPipelineRasterizationStateCreateInfo rasterizer{};
+	rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+	rasterizer.depthClampEnable = VK_FALSE;
+	rasterizer.rasterizerDiscardEnable = VK_FALSE;
+	rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+	rasterizer.lineWidth = 1.0f;
+	rasterizer.cullMode = VK_CULL_MODE_NONE;
+	rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	rasterizer.depthBiasEnable = VK_FALSE;
+
+	// -- Stage 6 multisampling
+	VkPipelineMultisampleStateCreateInfo multisampling{};
+	multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+	multisampling.sampleShadingEnable = VK_FALSE;
+	multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	// -- Stage 7 color blending
+	VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+	colorBlendAttachment.colorWriteMask =
+		VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+		VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	colorBlendAttachment.blendEnable = VK_FALSE;
+
+	VkPipelineColorBlendStateCreateInfo colorBlending{};
+	colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+	colorBlending.logicOpEnable = VK_FALSE;
+	colorBlending.attachmentCount = 1;
+	colorBlending.pAttachments = &colorBlendAttachment;
+
+	std::vector<VkDynamicState> dynamicStates = {
+		VK_DYNAMIC_STATE_VIEWPORT,
+		VK_DYNAMIC_STATE_SCISSOR
+	};
+	VkPipelineDynamicStateCreateInfo dynamicState{};
+	dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	dynamicState.dynamicStateCount = (uint32_t)dynamicStates.size();
+	dynamicState.pDynamicStates = dynamicStates.data();
+
+	// -- Stage 8 Pipeline Layout - EMPTY
+	VkPipelineLayoutCreateInfo layoutInfo{};
+	layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	layoutInfo.setLayoutCount = 0;
+	layoutInfo.pushConstantRangeCount = 0;
+	if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+		printf("Failed to create pipeline layout!\n");
+		exit(1);
+	}
+
+	// -- Stage 9 dynamic rendering
+	VkPipelineRenderingCreateInfo renderingInfo{};
+	renderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+	renderingInfo.colorAttachmentCount = 1;
+	renderingInfo.pColorAttachmentFormats = &swapChainImageFormat;
+
+	// -- Assemble everything
+	VkGraphicsPipelineCreateInfo pipelineInfo{};
+	pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+	pipelineInfo.pNext = &renderingInfo;
+	pipelineInfo.stageCount = 2;
+	pipelineInfo.pStages = stages;
+	pipelineInfo.pVertexInputState = &vertexInput;
+	pipelineInfo.pInputAssemblyState = &inputAssembly;
+	pipelineInfo.pViewportState = &viewportState;
+	pipelineInfo.pRasterizationState = &rasterizer;
+	pipelineInfo.pMultisampleState = &multisampling;
+	pipelineInfo.pColorBlendState = &colorBlending;
+	pipelineInfo.pDynamicState = &dynamicState;
+	pipelineInfo.layout = pipelineLayout;
+	pipelineInfo.renderPass = VK_NULL_HANDLE;
+	pipelineInfo.subpass = 0;
+
+	if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+		printf("Failed to create graphics pipeline!\n");
+		exit(1);
+	}
 
 	vkDestroyShaderModule(device, vert, nullptr);
 	vkDestroyShaderModule(device, frag, nullptr);
+
+	printf("Graphics pipeline created.\n");
 }
 
 
@@ -426,6 +537,12 @@ void createLogicalDevice() {
 	createInfo.enabledExtensionCount = (uint32_t)deviceExtensions.size();
 	createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
+	VkPhysicalDeviceDynamicRenderingFeatures dynamicRendering{};
+	dynamicRendering.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+	dynamicRendering.dynamicRendering = VK_TRUE;
+
+	createInfo.pNext = &dynamicRendering;
+
 	if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
 		printf("Failed to create logical device!\n");
 		exit(1);
@@ -462,15 +579,19 @@ int main() {
 	createLogicalDevice();
 	createSwapChain();
 	createImageViews();
-	testShaderLoading();
+	createGraphicsPipeline();
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 
+	vkDestroyPipeline(device, graphicsPipeline, nullptr);
+	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
 	for (auto view : swapChainImageViews) {
 		vkDestroyImageView(device, view, nullptr);
 	}
+
 	vkDestroySwapchainKHR(device, swapChain, nullptr);
 	vkDestroyDevice(device, nullptr);
 	vkDestroySurfaceKHR(instance, surface, nullptr);

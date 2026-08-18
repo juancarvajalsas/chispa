@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <set>
+#include <string>
 #include <optional>
 #include <vector>
 
@@ -54,6 +55,52 @@ struct QueueFamilyIndices {
 	}
 };
 
+struct SwapChainSupportDetails {
+	VkSurfaceCapabilitiesKHR capabilities;
+	std::vector<VkSurfaceFormatKHR> formats;
+	std::vector<VkPresentModeKHR> presentModes;
+};
+
+const std::vector<const char*> deviceExtensions = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
+
+SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice dev) {
+	SwapChainSupportDetails details;
+
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface, &details.capabilities);
+
+	uint32_t formatCount = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, nullptr);
+	if (formatCount != 0) {
+		details.formats.resize(formatCount);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &formatCount, details.formats.data());
+	}
+
+	uint32_t modeCount = 0;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &modeCount, nullptr);
+	if (modeCount != 0) {
+		details.presentModes.resize(modeCount);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &modeCount, details.presentModes.data());
+	}
+
+	return details;
+}
+
+bool checkDeviceExtensionSupport(VkPhysicalDevice dev) {
+	uint32_t extCount = 0;
+	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+
+	std::vector<VkExtensionProperties> available(extCount);
+	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, available.data());
+
+	std::set<std::string> required(deviceExtensions.begin(), deviceExtensions.end());
+	for (const auto& ext : available) {
+		required.erase(ext.extensionName);
+	}
+	return required.empty();
+}
+
 void createSurface() {
 	if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
 		printf("Failed to create window surface!\n");
@@ -89,7 +136,8 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
 
 bool isDeviceSuitable(VkPhysicalDevice device) {
 	QueueFamilyIndices indices = findQueueFamilies(device);
-	return indices.isComplete();
+	bool extensionsSupported = checkDeviceExtensionSupport(device);
+	return indices.isComplete() && extensionsSupported;
 }
 
 void pickPhysicalDevice() {
@@ -121,6 +169,13 @@ void pickPhysicalDevice() {
 	printf("Selected GPU: %s\n", props.deviceName);
 	printf("	graphics family		%u\n", indices.graphicsFamily.value());
 	printf("	present family:	%u\n", indices.presentFamily.value());
+
+	SwapChainSupportDetails swap = querySwapChainSupport(physicalDevice);
+	printf("Swapchain support:\n");
+	printf("	formats available: %zu\n", swap.formats.size());
+	printf("	present modes available: %zu\n", swap.presentModes.size());
+	printf("	min image counts: %u, max image count: %u\n", swap.capabilities.minImageCount, swap.capabilities.maxImageCount);
+	printf("	current extent: %u x %u\n", swap.capabilities.currentExtent.width, swap.capabilities.currentExtent.height);
 }
 
 void createInstance() {
@@ -202,7 +257,8 @@ void createLogicalDevice() {
 	createInfo.pQueueCreateInfos = queueCreateInfos.data();
 	createInfo.pEnabledFeatures = &deviceFeatures;
 
-	createInfo.enabledExtensionCount = 0;
+	createInfo.enabledExtensionCount = (uint32_t)deviceExtensions.size();
+	createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
 	if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
 		printf("Failed to create logical device!\n");

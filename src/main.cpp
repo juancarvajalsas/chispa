@@ -1,9 +1,11 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <string>
 #include <optional>
@@ -46,6 +48,10 @@ GLFWwindow* window;
 VkDevice device;
 VkQueue graphicsQueue;
 VkQueue presentQueue;
+VkSwapchainKHR swapChain;
+std::vector<VkImage> swapChainImages;
+VkFormat swapChainImageFormat;
+VkExtent2D swapChainExtent;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -64,6 +70,38 @@ struct SwapChainSupportDetails {
 const std::vector<const char*> deviceExtensions = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
+
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available) {
+	for (const auto& f : available) {
+		if (f.format == VK_FORMAT_R8G8B8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+			return f;
+		}
+	}
+	return available[0];
+}
+
+VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& available) {
+	for (const auto& m : available) {
+		if (m == VK_PRESENT_MODE_MAILBOX_KHR) {
+			return m;
+		}
+	}
+	return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& caps) {
+	if (caps.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+		return caps.currentExtent;
+	}
+
+	int width, height;
+	glfwGetFramebufferSize(window, &width, &height);
+	VkExtent2D actual = {(uint32_t)width, (uint32_t)height};
+	actual.width = std::clamp(actual.width, caps.minImageExtent.width, caps.maxImageExtent.width);
+	actual.height = std::clamp(actual.height, caps.minImageExtent.height, caps.maxImageExtent.height);
+	
+	return actual;
+}
 
 SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice dev) {
 	SwapChainSupportDetails details;
@@ -85,28 +123,6 @@ SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice dev) {
 	}
 
 	return details;
-}
-
-bool checkDeviceExtensionSupport(VkPhysicalDevice dev) {
-	uint32_t extCount = 0;
-	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
-
-	std::vector<VkExtensionProperties> available(extCount);
-	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, available.data());
-
-	std::set<std::string> required(deviceExtensions.begin(), deviceExtensions.end());
-	for (const auto& ext : available) {
-		required.erase(ext.extensionName);
-	}
-	return required.empty();
-}
-
-void createSurface() {
-	if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
-		printf("Failed to create window surface!\n");
-		exit(1);
-	}
-	printf("Surface created.\n");
 }
 
 QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
@@ -132,6 +148,80 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
 	}
 
 	return indices;
+}
+
+void createSwapChain() {
+	SwapChainSupportDetails support = querySwapChainSupport(physicalDevice);
+	VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(support.formats);
+	VkPresentModeKHR presentMode = chooseSwapPresentMode(support.presentModes);
+	VkExtent2D extent = chooseSwapExtent(support.capabilities);
+	
+	uint32_t imageCount = support.capabilities.minImageCount + 1;
+	if (support.capabilities.maxImageCount > 0 && imageCount > support.capabilities.maxImageCount) {
+		imageCount = support.capabilities.maxImageCount;
+	}
+
+	VkSwapchainCreateInfoKHR createInfo{};
+	createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+	createInfo.surface = surface;
+	createInfo.minImageCount = imageCount;
+	createInfo.imageFormat = surfaceFormat.format;
+	createInfo.imageColorSpace = surfaceFormat.colorSpace;
+	createInfo.imageExtent = extent;
+	createInfo.imageArrayLayers = 1;
+	createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+	QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+	uint32_t familyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+	if (indices.graphicsFamily != indices.presentFamily) {
+		createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+		createInfo.queueFamilyIndexCount = 2;
+		createInfo.pQueueFamilyIndices = familyIndices;
+	} else {
+		createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	}
+
+	createInfo.preTransform = support.capabilities.currentTransform;
+	createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+	createInfo.presentMode = presentMode;
+	createInfo.clipped = VK_TRUE;
+	createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+	if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+		printf("Failed to create swap chain!\n");
+		exit(1);
+	}
+
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+	swapChainImages.resize(imageCount);
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+	swapChainImageFormat = surfaceFormat.format;
+	swapChainExtent = extent;
+
+	printf("Swapchain created. Images: %u, extent %u x %u\n", imageCount, extent.width, extent.height);
+}
+
+bool checkDeviceExtensionSupport(VkPhysicalDevice dev) {
+	uint32_t extCount = 0;
+	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+
+	std::vector<VkExtensionProperties> available(extCount);
+	vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, available.data());
+
+	std::set<std::string> required(deviceExtensions.begin(), deviceExtensions.end());
+	for (const auto& ext : available) {
+		required.erase(ext.extensionName);
+	}
+	return required.empty();
+}
+
+void createSurface() {
+	if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+		printf("Failed to create window surface!\n");
+		exit(1);
+	}
+	printf("Surface created.\n");
 }
 
 bool isDeviceSuitable(VkPhysicalDevice device) {
@@ -294,11 +384,14 @@ int main() {
 	createSurface();
 	pickPhysicalDevice();
 	createLogicalDevice();
+	createSwapChain();
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 
+
+	vkDestroySwapchainKHR(device, swapChain, nullptr);
 	vkDestroyDevice(device, nullptr);
 	vkDestroySurfaceKHR(instance, surface, nullptr);
 	vkDestroyInstance(instance, nullptr);

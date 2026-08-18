@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <optional>
 #include <vector>
 
@@ -41,6 +42,9 @@ VkInstance instance;
 VkSurfaceKHR surface;
 VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 GLFWwindow* window;
+VkDevice device;
+VkQueue graphicsQueue;
+VkQueue presentQueue;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -172,6 +176,45 @@ void createInstance() {
 	printf("Vulkan instance created succesfully.\n");
 }
 
+void createLogicalDevice() {
+	QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+	std::set<uint32_t> uniqueFamilies = {
+		indices.graphicsFamily.value(),
+		indices.presentFamily.value()
+	};
+
+	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+	float queuePriority = 1.0f;
+	for (uint32_t family : uniqueFamilies) {
+		VkDeviceQueueCreateInfo qInfo{};
+		qInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		qInfo.queueFamilyIndex = family;
+		qInfo.queueCount = 1;
+		qInfo.pQueuePriorities = &queuePriority;
+		queueCreateInfos.push_back(qInfo);
+	}
+
+	VkPhysicalDeviceFeatures deviceFeatures{};
+
+	VkDeviceCreateInfo createInfo{};
+	createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+	createInfo.queueCreateInfoCount = (uint32_t)queueCreateInfos.size();
+	createInfo.pQueueCreateInfos = queueCreateInfos.data();
+	createInfo.pEnabledFeatures = &deviceFeatures;
+
+	createInfo.enabledExtensionCount = 0;
+
+	if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+		printf("Failed to create logical device!\n");
+		exit(1);
+	}
+
+	vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+	vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+
+	printf("Logical device created, queues retrieved.\n");
+}
+
 int main() {
 	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 	
@@ -194,11 +237,13 @@ int main() {
 	createInstance();
 	createSurface();
 	pickPhysicalDevice();
+	createLogicalDevice();
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 
+	vkDestroyDevice(device, nullptr);
 	vkDestroySurfaceKHR(instance, surface, nullptr);
 	vkDestroyInstance(instance, nullptr);
 	glfwDestroyWindow(window);

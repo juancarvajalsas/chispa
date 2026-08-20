@@ -2,6 +2,8 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -60,6 +62,7 @@ VkCommandBuffer commandBuffer;
 VkSemaphore imageAvailableSemaphore;
 std::vector<VkSemaphore> renderFinishedSemaphore;
 VkFence inFlighFence;
+float currentOffsetX = 0.0f;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -73,6 +76,10 @@ struct SwapChainSupportDetails {
 	VkSurfaceCapabilitiesKHR capabilities;
 	std::vector<VkSurfaceFormatKHR> formats;
 	std::vector<VkPresentModeKHR> presentModes;
+};
+
+struct PushConstants {
+	float offset[2];
 };
 
 const std::vector<const char*> deviceExtensions = {
@@ -188,11 +195,18 @@ void createGraphicsPipeline() {
 	dynamicState.dynamicStateCount = (uint32_t)dynamicStates.size();
 	dynamicState.pDynamicStates = dynamicStates.data();
 
-	// -- Stage 8 Pipeline Layout - EMPTY
+	// -- Stage 8 Pipeline Layout
+	VkPushConstantRange pushConstantRange{};
+	pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	pushConstantRange.offset = 0;
+	pushConstantRange.size = sizeof(PushConstants);
+
 	VkPipelineLayoutCreateInfo layoutInfo{};
 	layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	layoutInfo.setLayoutCount = 0;
-	layoutInfo.pushConstantRangeCount = 0;
+	layoutInfo.pushConstantRangeCount = 1;
+	layoutInfo.pPushConstantRanges = &pushConstantRange;
+
 	if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 		printf("Failed to create pipeline layout!\n");
 		exit(1);
@@ -265,7 +279,7 @@ void createImageViews() {
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available) {
 	for (const auto& f : available) {
-		if (f.format == VK_FORMAT_R8G8B8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+		if (f.format == VK_FORMAT_R8G8B8A8_UNORM && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
 			return f;
 		}
 	}
@@ -686,6 +700,11 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 	scissor.extent = swapChainExtent;
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+	PushConstants pc{};
+	pc.offset[0] = currentOffsetX;
+	pc.offset[1] = 0.0f;
+	vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &pc);
+
 	vkCmdDraw(cmd, 3, 1, 0, 0);
 
 	vkCmdEndRendering(cmd);
@@ -781,8 +800,14 @@ int main() {
 	createCommandBuffer();
 	createSyncObjects();
 
+	auto startTime = std::chrono::high_resolution_clock::now();
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+
+		auto now = std::chrono::high_resolution_clock::now();
+		float t = std::chrono::duration<float>(now - startTime).count();
+
+		currentOffsetX = 0.5f * sin(t * 2.0f);
 		drawFrame();
 	}
 

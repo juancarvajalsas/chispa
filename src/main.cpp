@@ -740,7 +740,7 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
   vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                      sizeof(PushConstants), &pc);
 
-  vkCmdDraw(cmd, 3, 1, 0, 0);
+  vkCmdDraw(cmd, 6, 1, 0, 0);
 
   vkCmdEndRendering(cmd);
 

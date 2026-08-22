@@ -61,7 +61,6 @@ VkCommandBuffer commandBuffer;
 VkSemaphore imageAvailableSemaphore;
 std::vector<VkSemaphore> renderFinishedSemaphore;
 VkFence inFlighFence;
-float currentOffsetX = 0.0f;
 
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
@@ -80,6 +79,14 @@ struct SwapChainSupportDetails {
 struct PushConstants {
   float offset[2];
 };
+
+struct GameObject {
+  float x, y;
+};
+
+GameObject leftPaddle = {-0.8, 0.0f};
+GameObject rightPaddle = {0.8, 0.0f};
+GameObject ball = {0.0f, 0.0f};
 
 const std::vector<const char *> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME};
@@ -734,13 +741,19 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
   scissor.extent = swapChainExtent;
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-  PushConstants pc{};
-  pc.offset[0] = currentOffsetX;
-  pc.offset[1] = 0.0f;
-  vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                     sizeof(PushConstants), &pc);
+  auto drawObject = [&](const GameObject &obj) {
+    PushConstants pc{};
+    pc.offset[0] = obj.x;
+    pc.offset[1] = obj.y;
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                       sizeof(PushConstants), &pc);
 
-  vkCmdDraw(cmd, 6, 1, 0, 0);
+    vkCmdDraw(cmd, 6, 1, 0, 0);
+  };
+
+  drawObject(leftPaddle);
+  drawObject(rightPaddle);
+  drawObject(ball);
 
   vkCmdEndRendering(cmd);
 
@@ -847,15 +860,25 @@ int main() {
     lastTime = now;
 
     float speed = 1.5f;
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-      currentOffsetX -= speed * dt;
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-      currentOffsetX += speed * dt;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+      leftPaddle.y -= speed * dt;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+      leftPaddle.y += speed * dt;
 
-    if (currentOffsetX < -1.0f)
-      currentOffsetX = -1.0f;
-    if (currentOffsetX > 1.0f)
-      currentOffsetX = 1.0f;
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+      rightPaddle.y -= speed * dt;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+      rightPaddle.y += speed * dt;
+
+    auto clampY = [](float &y) {
+      if (y < -0.8)
+        y = -0.8f;
+      if (y > 0.8f)
+        y = 0.8f;
+    };
+
+    clampY(leftPaddle.y);
+    clampY(rightPaddle.y);
 
     drawFrame();
   }

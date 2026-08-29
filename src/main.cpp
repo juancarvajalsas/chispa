@@ -92,6 +92,9 @@ struct PushConstants {
   float offset[2];
   float halfSize[2];
   float proj[16];
+  float uvOffset[2];
+  float uvScale[2];
+  int useTexture;
 };
 
 struct GameObject {
@@ -102,6 +105,8 @@ struct GameObject {
 GameObject leftPaddle = {-0.8, 0.0f, 0.05f, 0.25f};
 GameObject rightPaddle = {0.8, 0.0f, 0.05f, 0.25f};
 GameObject ball = {0.0f, 0.0f, 0.04f, 0.04f};
+int scoreLeft = 0;
+int scoreRight = 0;
 
 float ballVelX = 0.6f;
 float ballVelY = 0.4f;
@@ -313,7 +318,7 @@ void createGraphicsPipeline() {
 
   // -- Stage 8 Pipeline Layout
   VkPushConstantRange pushConstantRange{};
-  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   pushConstantRange.offset = 0;
   pushConstantRange.size = sizeof(PushConstants);
 
@@ -857,25 +862,43 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
   float aspect = (float)swapChainExtent.width / (float)swapChainExtent.height;
   auto proj = makeOrthoMatrix(aspect);
 
-  auto drawObject = [&](const GameObject &obj) {
+  auto drawQuad = [&](float x, float y, float hw, float hh, bool useTexture,
+                      float uvOffX, float uvOffY, float uvScaleX,
+                      float uvScaleY) {
     PushConstants pc{};
-    pc.offset[0] = obj.x;
-    pc.offset[1] = obj.y;
-    pc.halfSize[0] = obj.halfW;
-    pc.halfSize[1] = obj.halfH;
+    pc.offset[0] = x;
+    pc.offset[1] = y;
+    pc.halfSize[0] = hw;
+    pc.halfSize[1] = hh;
+    pc.useTexture = useTexture ? 1 : 0;
+
     for (int i = 0; i < 16; i++) {
       pc.proj[i] = proj[i];
     }
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
+    pc.uvOffset[0] = uvOffX;
+    pc.uvOffset[1] = uvOffY;
+    pc.uvScale[0] = uvScaleX;
+    pc.uvScale[1] = uvScaleY;
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(PushConstants), &pc);
 
     vkCmdDraw(cmd, 6, 1, 0, 0);
   };
 
-  drawObject(leftPaddle);
-  drawObject(rightPaddle);
-  drawObject(ball);
+  auto drawDigit = [&](int digit, float x, float y, float hw, float hh) {
+    float uvX = digit * 0.1f;
+    drawQuad(x, y, hw, hh, true, uvX, 0.0f, 0.1f, 1.0f);
+  };
+
+  drawQuad(leftPaddle.x, leftPaddle.y, leftPaddle.halfW, leftPaddle.halfH,
+           false, 0, 0, 1, 1);
+  drawQuad(rightPaddle.x, rightPaddle.y, rightPaddle.halfW, rightPaddle.halfH,
+           false, 0, 0, 1, 1);
+  drawQuad(ball.x, ball.y, ball.halfW, ball.halfH, false, 0, 0, 1, 1);
+
+  drawDigit(scoreLeft, -0.3f, -0.8f, 0.05f, 0.1f);
+  drawDigit(scoreRight, 0.3f, -0.8f, 0.05f, 0.1f);
 
   vkCmdEndRendering(cmd);
 
@@ -944,7 +967,7 @@ void drawFrame() {
 
 void createTextureImage() {
   int texWidth, texHeight, texChannels;
-  stbi_uc *pixels = stbi_load("textures/test.png", &texWidth, &texHeight,
+  stbi_uc *pixels = stbi_load("textures/digits.png", &texWidth, &texHeight,
                               &texChannels, STBI_rgb_alpha);
 
   if (!pixels) {
@@ -1236,19 +1259,21 @@ int main() {
         ballVelX = -ballVelX;
 
       if (ball.x < -1.0f) {
+        scoreRight++;
         ball.x = 0.0f;
         ball.y = 0.0f;
         ballVelX = 0.6f;
         ballVelY = 0.4f;
-        printf("Right player scores!\n");
+        printf("Score: %d - %d!\n", scoreLeft, scoreRight);
       }
 
       if (ball.x > 1.0f) {
+        scoreLeft++;
         ball.x = 0.0f;
         ball.y = 0.0f;
         ballVelX = -0.6f;
         ballVelY = 0.4f;
-        printf("Left player scores!\n");
+        printf("Score: %d - %d!\n", scoreLeft, scoreRight);
       }
     }
     drawFrame();

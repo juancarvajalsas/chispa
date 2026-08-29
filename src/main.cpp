@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -64,6 +65,11 @@ std::vector<VkSemaphore> renderFinishedSemaphore;
 VkFence inFlighFence;
 VkImage textureImage;
 VkDeviceMemory textureImageMemory;
+VkSampler textureSampler;
+VkImageView textureImageView;
+VkDescriptorSetLayout descriptorSetLayout;
+VkDescriptorPool descriptorPool;
+VkDescriptorSet descriptorSet;
 
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
@@ -82,6 +88,7 @@ struct SwapChainSupportDetails {
 struct PushConstants {
   float offset[2];
   float halfSize[2];
+  float proj[16];
 };
 
 struct GameObject {
@@ -115,6 +122,15 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   exit(1);
 }
 
+std::array<float, 16> makeOrthoMatrix(float aspect) {
+  float sx = 1.0f / aspect;
+  float sy = 1.0f;
+
+  // 4x4 matrix
+  return {sx,   0.0f, 0.0f, 0.0f, 0.0f, sy,   0.0f, 0.0f,
+          0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+}
+
 void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                   VkMemoryPropertyFlags properties, VkBuffer &buffer,
                   VkDeviceMemory &bufferMemory) {
@@ -146,7 +162,7 @@ void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 }
 
 std::vector<uint32_t> generateCheckerboard() {
-  std::vector<uint32_t> pixels(TEX_SIZE * TEX_SIZE);
+  std::vector<uint32_t> pixels(static_cast<uint32_t>(TEX_SIZE * TEX_SIZE));
   for (uint32_t y = 0; y < TEX_SIZE; y++) {
     for (uint32_t x = 0; x < TEX_SIZE; x++) {
       bool white = ((x + y) % 2) == 0;
@@ -300,7 +316,8 @@ void createGraphicsPipeline() {
 
   VkPipelineLayoutCreateInfo layoutInfo{};
   layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  layoutInfo.setLayoutCount = 0;
+  layoutInfo.setLayoutCount = 1;
+  layoutInfo.pSetLayouts = &descriptorSetLayout;
   layoutInfo.pushConstantRangeCount = 1;
   layoutInfo.pPushConstantRanges = &pushConstantRange;
 
@@ -831,12 +848,21 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
   scissor.extent = swapChainExtent;
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+                          0, 1, &descriptorSet, 0, nullptr);
+
+  float aspect = (float)swapChainExtent.width / (float)swapChainExtent.height;
+  auto proj = makeOrthoMatrix(aspect);
+
   auto drawObject = [&](const GameObject &obj) {
     PushConstants pc{};
     pc.offset[0] = obj.x;
     pc.offset[1] = obj.y;
     pc.halfSize[0] = obj.halfW;
     pc.halfSize[1] = obj.halfH;
+    for (int i = 0; i < 16; i++) {
+      pc.proj[i] = proj[i];
+    }
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(PushConstants), &pc);
@@ -989,6 +1015,115 @@ void createTextureImage() {
          TEX_SIZE);
 }
 
+void createTextureSampler() {
+  VkSamplerCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  info.magFilter = VK_FILTER_NEAREST;
+  info.minFilter = VK_FILTER_NEAREST;
+  info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  info.anisotropyEnable = VK_FALSE;
+  info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  info.unnormalizedCoordinates = VK_FALSE;
+  info.compareEnable = VK_FALSE;
+  info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+  if (vkCreateSampler(device, &info, nullptr, &textureSampler) != VK_SUCCESS) {
+    printf("Failed to create texture sampler!\n");
+    exit(1);
+  }
+  printf("Texture sampler created.\n");
+}
+
+void createTextureImageView() {
+  VkImageViewCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  info.image = textureImage;
+  info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  info.format = VK_FORMAT_R8G8B8A8_UNORM;
+  info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  info.subresourceRange.levelCount = 1;
+  info.subresourceRange.layerCount = 1;
+
+  if (vkCreateImageView(device, &info, nullptr, &textureImageView) !=
+      VK_SUCCESS) {
+    printf("Failed to create texture image view!\n");
+    exit(1);
+  }
+  printf("Texture image view created.\n");
+}
+
+void createDescriptorSetLayout() {
+  VkDescriptorSetLayoutBinding samplerBinding{};
+  samplerBinding.binding = 0;
+  samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  samplerBinding.descriptorCount = 1;
+  samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  info.bindingCount = 1;
+  info.pBindings = &samplerBinding;
+
+  if (vkCreateDescriptorSetLayout(device, &info, nullptr,
+                                  &descriptorSetLayout) != VK_SUCCESS) {
+    printf("Failed to create descriptor set layout!\n");
+    exit(1);
+  }
+
+  printf("Descriptor set layout created.\n");
+}
+
+void createDescriptorPool() {
+  VkDescriptorPoolSize poolSize{};
+  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSize.descriptorCount = 1;
+
+  VkDescriptorPoolCreateInfo info{};
+  info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  info.poolSizeCount = 1;
+  info.pPoolSizes = &poolSize;
+  info.maxSets = 1;
+
+  if (vkCreateDescriptorPool(device, &info, nullptr, &descriptorPool) !=
+      VK_SUCCESS) {
+    printf("Failed to create descriptor pool!\n");
+    exit(1);
+  }
+  printf("Descriptor pool created.\n");
+}
+
+void createDescriptorSet() {
+  VkDescriptorSetAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = descriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &descriptorSetLayout;
+
+  if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) !=
+      VK_SUCCESS) {
+    printf("Failed to allocate descriptor set!\n");
+    exit(1);
+  }
+
+  VkDescriptorImageInfo imageInfo{};
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  imageInfo.imageView = textureImageView;
+  imageInfo.sampler = textureSampler;
+
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = descriptorSet;
+  write.dstBinding = 0;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.descriptorCount = 1;
+  write.pImageInfo = &imageInfo;
+
+  vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+  printf("Descriptor set created and pointed at the texture.\n");
+}
+
 int main() {
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 
@@ -1014,13 +1149,19 @@ int main() {
   createLogicalDevice();
   createSwapChain();
   createImageViews();
+  createDescriptorSetLayout();
   createGraphicsPipeline();
   createCommandPool();
   createTextureImage();
+  createTextureImageView();
+  createTextureSampler();
+  createDescriptorPool();
+  createDescriptorSet();
   createCommandBuffer();
   createSyncObjects();
 
   auto startTime = std::chrono::high_resolution_clock::now();
+  bool isPaused = false;
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
@@ -1028,76 +1169,85 @@ int main() {
       glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
+    if (glfwGetKey(window, GLFW_KEY_SPACE)) {
+      isPaused = !isPaused;
+    }
+
     static auto lastTime = std::chrono::high_resolution_clock::now();
     auto now = std::chrono::high_resolution_clock::now();
     float dt = std::chrono::duration<float>(now - lastTime).count();
     lastTime = now;
 
-    float speed = 1.5f;
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-      leftPaddle.y -= speed * dt;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-      leftPaddle.y += speed * dt;
+    if (!isPaused) {
+      float speed = 1.5f;
+      if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        leftPaddle.y -= speed * dt;
+      if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        leftPaddle.y += speed * dt;
 
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-      rightPaddle.y -= speed * dt;
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-      rightPaddle.y += speed * dt;
+      if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+        rightPaddle.y -= speed * dt;
+      if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+        rightPaddle.y += speed * dt;
 
-    auto clampY = [](float &y) {
-      if (y < -0.8)
-        y = -0.8f;
-      if (y > 0.8f)
-        y = 0.8f;
-    };
+      auto clampY = [](float &y) {
+        if (y < -0.8)
+          y = -0.8f;
+        if (y > 0.8f)
+          y = 0.8f;
+      };
 
-    clampY(leftPaddle.y);
-    clampY(rightPaddle.y);
+      clampY(leftPaddle.y);
+      clampY(rightPaddle.y);
 
-    ball.x += ballVelX * dt;
-    ball.y += ballVelY * dt;
+      ball.x += ballVelX * dt;
+      ball.y += ballVelY * dt;
 
-    if (ball.y < -0.9f) {
-      ball.y = -0.9f;
-      ballVelY = -ballVelY;
+      if (ball.y < -0.9f) {
+        ball.y = -0.9f;
+        ballVelY = -ballVelY;
+      }
+      if (ball.y > 0.9f) {
+        ball.y = 0.9f;
+        ballVelY = -ballVelY;
+      }
+      auto overlaps = [](const GameObject &a, const GameObject &b) {
+        return std::abs(a.x - b.x) < (a.halfW + b.halfW) &&
+               std::abs(a.y - b.y) < (a.halfH + b.halfH);
+      };
+
+      if (overlaps(ball, leftPaddle) && ballVelX < 0.0f)
+        ballVelX = -ballVelX;
+      if (overlaps(ball, rightPaddle) && ballVelX > 0.0f)
+        ballVelX = -ballVelX;
+
+      if (ball.x < -1.0f) {
+        ball.x = 0.0f;
+        ball.y = 0.0f;
+        ballVelX = 0.6f;
+        ballVelY = 0.4f;
+        printf("Right player scores!\n");
+      }
+
+      if (ball.x > 1.0f) {
+        ball.x = 0.0f;
+        ball.y = 0.0f;
+        ballVelX = -0.6f;
+        ballVelY = 0.4f;
+        printf("Left player scores!\n");
+      }
     }
-    if (ball.y > 0.9f) {
-      ball.y = 0.9f;
-      ballVelY = -ballVelY;
-    }
-    auto overlaps = [](const GameObject &a, const GameObject &b) {
-      return std::abs(a.x - b.x) < (a.halfW + b.halfW) &&
-             std::abs(a.y - b.y) < (a.halfH + b.halfH);
-    };
-
-    if (overlaps(ball, leftPaddle) && ballVelX < 0.0f)
-      ballVelX = -ballVelX;
-    if (overlaps(ball, rightPaddle) && ballVelX > 0.0f)
-      ballVelX = -ballVelX;
-
-    if (ball.x < -1.0f) {
-      ball.x = 0.0f;
-      ball.y = 0.0f;
-      ballVelX = 0.6f;
-      ballVelY = 0.4f;
-      printf("Right player scores!\n");
-    }
-
-    if (ball.x > 1.0f) {
-      ball.x = 0.0f;
-      ball.y = 0.0f;
-      ballVelX = -0.6f;
-      ballVelY = 0.4f;
-      printf("Left player scores!\n");
-    }
-
     drawFrame();
   }
 
   vkDeviceWaitIdle(device);
 
+  vkDestroySampler(device, textureSampler, nullptr);
+  vkDestroyImageView(device, textureImageView, nullptr);
   vkDestroyImage(device, textureImage, nullptr);
   vkFreeMemory(device, textureImageMemory, nullptr);
+  vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+  vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
   vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
   for (auto sem : renderFinishedSemaphore) {

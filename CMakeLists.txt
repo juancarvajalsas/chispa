@@ -10,6 +10,7 @@ find_package(glfw3 REQUIRED)
 
 add_executable(vk_triangle src/main.cpp)
 
+target_include_directories(vk_triangle PRIVATE third_party)
 target_link_libraries(vk_triangle
 	Vulkan::Vulkan
 	glfw

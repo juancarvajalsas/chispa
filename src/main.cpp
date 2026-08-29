@@ -1,6 +1,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -940,8 +943,17 @@ void drawFrame() {
 }
 
 void createTextureImage() {
-  auto pixels = generateCheckerboard();
-  VkDeviceSize imageSize = TEX_SIZE * TEX_SIZE * 4;
+  int texWidth, texHeight, texChannels;
+  stbi_uc *pixels = stbi_load("textures/test.png", &texWidth, &texHeight,
+                              &texChannels, STBI_rgb_alpha);
+
+  if (!pixels) {
+    printf("Failed to load texture image! (%s)\n", stbi_failure_reason());
+    exit(1);
+  }
+
+  VkDeviceSize imageSize = texWidth * texHeight * 4;
+  printf("Loaded PNG: %dx%d, %d channels\n", texWidth, texHeight, texChannels);
 
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingMemory;
@@ -952,14 +964,16 @@ void createTextureImage() {
 
   void *data;
   vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data);
-  memcpy(data, pixels.data(), (size_t)imageSize);
+  memcpy(data, pixels, (size_t)imageSize);
   vkUnmapMemory(device, stagingMemory);
+
+  stbi_image_free(pixels);
 
   VkImageCreateInfo imageInfo{};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   imageInfo.imageType = VK_IMAGE_TYPE_2D;
-  imageInfo.extent.width = TEX_SIZE;
-  imageInfo.extent.height = TEX_SIZE;
+  imageInfo.extent.width = texWidth;
+  imageInfo.extent.height = texHeight;
   imageInfo.extent.depth = 1;
   imageInfo.mipLevels = 1;
   imageInfo.arrayLayers = 1;
@@ -996,7 +1010,7 @@ void createTextureImage() {
   VkBufferImageCopy region{};
   region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   region.imageSubresource.layerCount = 1;
-  region.imageExtent = {TEX_SIZE, TEX_SIZE, 1};
+  region.imageExtent = {(uint32_t)texWidth, (uint32_t)texHeight, 1};
   vkCmdCopyBufferToImage(cmd, stagingBuffer, textureImage,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -61,6 +62,8 @@ VkCommandBuffer commandBuffer;
 VkSemaphore imageAvailableSemaphore;
 std::vector<VkSemaphore> renderFinishedSemaphore;
 VkFence inFlighFence;
+VkImage textureImage;
+VkDeviceMemory textureImageMemory;
 
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
@@ -78,20 +81,107 @@ struct SwapChainSupportDetails {
 
 struct PushConstants {
   float offset[2];
+  float halfSize[2];
 };
 
 struct GameObject {
   float x, y;
+  float halfW, halfH;
 };
 
-GameObject leftPaddle = {-0.8, 0.0f};
-GameObject rightPaddle = {0.8, 0.0f};
-GameObject ball = {0.0f, 0.0f};
+GameObject leftPaddle = {-0.8, 0.0f, 0.05f, 0.25f};
+GameObject rightPaddle = {0.8, 0.0f, 0.05f, 0.25f};
+GameObject ball = {0.0f, 0.0f, 0.04f, 0.04f};
 
+float ballVelX = 0.6f;
+float ballVelY = 0.4f;
 const std::vector<const char *> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 std::vector<VkImageView> swapChainImageViews;
+const uint32_t TEX_SIZE = 8;
+
+uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProps;
+  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+
+  for (uint32_t i = 0; i < memProps.memoryTypeCount; i++) {
+    if ((typeFilter & (1 << i)) &&
+        (memProps.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  printf("Failed to find suitable memory type!\n");
+  exit(1);
+}
+
+void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                  VkMemoryPropertyFlags properties, VkBuffer &buffer,
+                  VkDeviceMemory &bufferMemory) {
+  VkBufferCreateInfo bufferInfo{};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+    printf("Failed to create buffer!\n");
+    exit(1);
+  }
+
+  VkMemoryRequirements memReq;
+  vkGetBufferMemoryRequirements(device, buffer, &memReq);
+
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memReq.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) !=
+      VK_SUCCESS) {
+    printf("Failed to allocate buffer memory!\n");
+    exit(1);
+  }
+  vkBindBufferMemory(device, buffer, bufferMemory, 0);
+}
+
+std::vector<uint32_t> generateCheckerboard() {
+  std::vector<uint32_t> pixels(TEX_SIZE * TEX_SIZE);
+  for (uint32_t y = 0; y < TEX_SIZE; y++) {
+    for (uint32_t x = 0; x < TEX_SIZE; x++) {
+      bool white = ((x + y) % 2) == 0;
+      pixels[y * TEX_SIZE + x] = white ? 0xFFFFFFFF : 0xFF000000;
+    }
+  }
+  return pixels;
+}
+
+VkCommandBuffer beginSingleTimeCommands() {
+  VkCommandBufferAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = commandPool;
+  allocInfo.commandBufferCount = 1;
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(device, &allocInfo, &cmd);
+
+  VkCommandBufferBeginInfo begin{};
+  begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &begin);
+  return cmd;
+}
+
+void endSingleTimeCommands(VkCommandBuffer cmd) {
+  vkEndCommandBuffer(cmd);
+  VkSubmitInfo submit{};
+  submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submit.commandBufferCount = 1;
+  submit.pCommandBuffers = &cmd;
+  vkQueueSubmit(graphicsQueue, 1, &submit, VK_NULL_HANDLE);
+  vkQueueWaitIdle(graphicsQueue);
+  vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+}
 
 std::vector<char> readFile(const std::string &filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -745,6 +835,9 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     PushConstants pc{};
     pc.offset[0] = obj.x;
     pc.offset[1] = obj.y;
+    pc.halfSize[0] = obj.halfW;
+    pc.halfSize[1] = obj.halfH;
+
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0,
                        sizeof(PushConstants), &pc);
 
@@ -820,6 +913,82 @@ void drawFrame() {
   vkQueuePresentKHR(presentQueue, &presentInfo);
 }
 
+void createTextureImage() {
+  auto pixels = generateCheckerboard();
+  VkDeviceSize imageSize = TEX_SIZE * TEX_SIZE * 4;
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingMemory;
+  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               stagingBuffer, stagingMemory);
+
+  void *data;
+  vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data);
+  memcpy(data, pixels.data(), (size_t)imageSize);
+  vkUnmapMemory(device, stagingMemory);
+
+  VkImageCreateInfo imageInfo{};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = TEX_SIZE;
+  imageInfo.extent.height = TEX_SIZE;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage =
+      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateImage(device, &imageInfo, nullptr, &textureImage) != VK_SUCCESS) {
+    printf("Failed to create texture image!\n");
+    exit(1);
+  }
+
+  VkMemoryRequirements memReq;
+  vkGetImageMemoryRequirements(device, textureImage, &memReq);
+  VkMemoryAllocateInfo alloc{};
+  alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  alloc.allocationSize = memReq.size;
+  alloc.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+  vkAllocateMemory(device, &alloc, nullptr, &textureImageMemory);
+  vkBindImageMemory(device, textureImage, textureImageMemory, 0);
+
+  VkCommandBuffer cmd = beginSingleTimeCommands();
+  transitionImageLayout(
+      cmd, textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+      0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {TEX_SIZE, TEX_SIZE, 1};
+  vkCmdCopyBufferToImage(cmd, stagingBuffer, textureImage,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  transitionImageLayout(
+      cmd, textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+  endSingleTimeCommands(cmd);
+
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingMemory, nullptr);
+
+  printf("Texture image created and upload (%ux%u checkboard).\n", TEX_SIZE,
+         TEX_SIZE);
+}
+
 int main() {
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
 
@@ -847,12 +1016,17 @@ int main() {
   createImageViews();
   createGraphicsPipeline();
   createCommandPool();
+  createTextureImage();
   createCommandBuffer();
   createSyncObjects();
 
   auto startTime = std::chrono::high_resolution_clock::now();
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE)) {
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    }
 
     static auto lastTime = std::chrono::high_resolution_clock::now();
     auto now = std::chrono::high_resolution_clock::now();
@@ -880,10 +1054,50 @@ int main() {
     clampY(leftPaddle.y);
     clampY(rightPaddle.y);
 
+    ball.x += ballVelX * dt;
+    ball.y += ballVelY * dt;
+
+    if (ball.y < -0.9f) {
+      ball.y = -0.9f;
+      ballVelY = -ballVelY;
+    }
+    if (ball.y > 0.9f) {
+      ball.y = 0.9f;
+      ballVelY = -ballVelY;
+    }
+    auto overlaps = [](const GameObject &a, const GameObject &b) {
+      return std::abs(a.x - b.x) < (a.halfW + b.halfW) &&
+             std::abs(a.y - b.y) < (a.halfH + b.halfH);
+    };
+
+    if (overlaps(ball, leftPaddle) && ballVelX < 0.0f)
+      ballVelX = -ballVelX;
+    if (overlaps(ball, rightPaddle) && ballVelX > 0.0f)
+      ballVelX = -ballVelX;
+
+    if (ball.x < -1.0f) {
+      ball.x = 0.0f;
+      ball.y = 0.0f;
+      ballVelX = 0.6f;
+      ballVelY = 0.4f;
+      printf("Right player scores!\n");
+    }
+
+    if (ball.x > 1.0f) {
+      ball.x = 0.0f;
+      ball.y = 0.0f;
+      ballVelX = -0.6f;
+      ballVelY = 0.4f;
+      printf("Left player scores!\n");
+    }
+
     drawFrame();
   }
 
   vkDeviceWaitIdle(device);
+
+  vkDestroyImage(device, textureImage, nullptr);
+  vkFreeMemory(device, textureImageMemory, nullptr);
 
   vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
   for (auto sem : renderFinishedSemaphore) {
@@ -904,5 +1118,6 @@ int main() {
   vkDestroyInstance(instance, nullptr);
   glfwDestroyWindow(window);
   glfwTerminate();
+  printf("Bye!");
   return 0;
 }

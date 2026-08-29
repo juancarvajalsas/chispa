@@ -102,6 +102,9 @@ struct GameObject {
   float halfW, halfH;
 };
 
+enum class GameState { Playing, Paused };
+
+GameState state = GameState::Playing;
 GameObject leftPaddle = {-0.8, 0.0f, 0.05f, 0.25f};
 GameObject rightPaddle = {0.8, 0.0f, 0.05f, 0.25f};
 GameObject ball = {0.0f, 0.0f, 0.04f, 0.04f};
@@ -110,6 +113,8 @@ int scoreRight = 0;
 
 float ballVelX = 0.6f;
 float ballVelY = 0.4f;
+bool pKeyWasDown = false;
+
 const std::vector<const char *> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
@@ -318,7 +323,8 @@ void createGraphicsPipeline() {
 
   // -- Stage 8 Pipeline Layout
   VkPushConstantRange pushConstantRange{};
-  pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+  pushConstantRange.stageFlags =
+      VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   pushConstantRange.offset = 0;
   pushConstantRange.size = sizeof(PushConstants);
 
@@ -880,8 +886,10 @@ void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.uvOffset[1] = uvOffY;
     pc.uvScale[0] = uvScaleX;
     pc.uvScale[1] = uvScaleY;
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                       sizeof(PushConstants), &pc);
+    vkCmdPushConstants(cmd, pipelineLayout,
+                       VK_SHADER_STAGE_VERTEX_BIT |
+                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(PushConstants), &pc);
 
     vkCmdDraw(cmd, 6, 1, 0, 0);
   };
@@ -1198,7 +1206,6 @@ int main() {
   createSyncObjects();
 
   auto startTime = std::chrono::high_resolution_clock::now();
-  bool isPaused = false;
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
@@ -1206,16 +1213,23 @@ int main() {
       glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 
-    if (glfwGetKey(window, GLFW_KEY_SPACE)) {
-      isPaused = !isPaused;
+    bool pKeyDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    if (pKeyDown && !pKeyWasDown) {
+      if (state == GameState::Playing) {
+        state = GameState::Paused;
+        printf("Paused!\n");
+      } else {
+        state = GameState::Playing;
+        printf("Resumed!\n");
+      }
     }
+    pKeyWasDown = pKeyDown;
 
     static auto lastTime = std::chrono::high_resolution_clock::now();
     auto now = std::chrono::high_resolution_clock::now();
     float dt = std::chrono::duration<float>(now - lastTime).count();
     lastTime = now;
-
-    if (!isPaused) {
+    if (state == GameState::Playing) {
       float speed = 1.5f;
       if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         leftPaddle.y -= speed * dt;

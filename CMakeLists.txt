@@ -31,7 +31,7 @@ endforeach()
 
 add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
-add_executable(vk_triangle src/main.cpp)
+add_executable(vk_triangle src/main.cpp src/engine.cpp)
 
 add_dependencies(vk_triangle shaders)
 target_include_directories(vk_triangle PRIVATE third_party)

@@ -139,7 +139,7 @@ static void createInstance() {
 
   VkApplicationInfo appInfo{};
   appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName = "Vulkan Triangle";
+  appInfo.pApplicationName = "My Engine";
   appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
   appInfo.pEngineName = "No Engine";
   appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -516,8 +516,8 @@ static VkShaderModule createShaderModule(const std::vector<char> &code) {
 }
 
 static void createGraphicsPipeline() {
-  auto vertCode = readFile("shaders/triangle.vert.spv");
-  auto fragCode = readFile("shaders/triangle.frag.spv");
+  auto vertCode = readFile("shaders/quad.vert.spv");
+  auto fragCode = readFile("shaders/quad.frag.spv");
   VkShaderModule vert = createShaderModule(vertCode);
   VkShaderModule frag = createShaderModule(fragCode);
 

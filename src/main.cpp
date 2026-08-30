@@ -114,6 +114,6 @@ int main() {
   }
 
   engineShutdown();
-  printf("Bye!");
+  printf("Bye!\n");
   return 0;
 }

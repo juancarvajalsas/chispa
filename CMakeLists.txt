@@ -31,11 +31,11 @@ endforeach()
 
 add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
-add_executable(vk_triangle src/main.cpp src/engine.cpp)
+# --- The engine as a library ---
+add_library(myengine STATIC src/engine.cpp)
+target_include_directories(myengine PUBLIC ${CMAKE_SOURCE_DIR} third_party)
+target_link_libraries(myengine PUBLIC Vulkan::Vulkan glfw)
+add_dependencies(myengine shaders)
 
-add_dependencies(vk_triangle shaders)
-target_include_directories(vk_triangle PRIVATE third_party)
-target_link_libraries(vk_triangle
-	Vulkan::Vulkan
-	glfw
-)
+add_executable(pong src/main.cpp)
+target_link_libraries(pong PRIVATE myengine)

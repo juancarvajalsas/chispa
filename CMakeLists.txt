@@ -10,4 +10,4 @@ find_package(glfw3 REQUIRED)
 
 add_subdirectory(engine)
 add_subdirectory(pong)
-#add_subdirectory(tetris)
+add_subdirectory(tetris)

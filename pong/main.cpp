@@ -1,4 +1,4 @@
-#include "engine.h"
+#include "../engine/engine.h"
 #include <GLFW/glfw3.h>
 
 #include <chrono>
@@ -12,7 +12,12 @@ struct GameObject {
 
 int main() {
   engineInit(800, 600, "Pong");
-  // loadTexture("textures/digits.png");
+  int digitsTex = loadTexture("pong/textures/digits.png");
+  if (digitsTex < 0) {
+    printf("Failed to load the texture!\n");
+    engineShutdown();
+    exit(1);
+  }
 
   GameObject leftPaddle = {-0.8, 0.0f, 0.05f, 0.25f};
   GameObject rightPaddle = {0.8, 0.0f, 0.05f, 0.25f};
@@ -30,8 +35,8 @@ int main() {
            std::abs(a.y - b.y) < (a.halfH + b.halfH);
   };
 
-  auto drawDigits = [](int d, float x, float y, float hw, float hh) {
-    drawSprite(x, y, hw, hh, d * 0.1f, 0.0f, 0.1f, 1.0f);
+  auto drawDigits = [&](int d, float x, float y, float hw, float hh) {
+    drawSprite(digitsTex, x, y, hw, hh, d * 0.1f, 0.0f, 0.1f, 1.0f);
   };
 
   auto lastTime = std::chrono::high_resolution_clock::now();
@@ -106,7 +111,8 @@ int main() {
     }
     engineBeginFrame();
     drawQuad(leftPaddle.x, leftPaddle.y, leftPaddle.halfW, leftPaddle.halfH);
-    drawQuad(rightPaddle.x, rightPaddle.y, rightPaddle.halfW, rightPaddle.halfH);
+    drawQuad(rightPaddle.x, rightPaddle.y, rightPaddle.halfW,
+             rightPaddle.halfH);
     drawQuad(ball.x, ball.y, ball.halfW, ball.halfH);
     drawDigits(scoreLeft, -0.3f, -0.8f, 0.05f, 0.1f);
     drawDigits(scoreRight, 0.3f, -0.8f, 0.05f, 0.1f);

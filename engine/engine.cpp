@@ -6,8 +6,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -68,13 +68,8 @@ static VkCommandBuffer commandBuffer;
 static VkSemaphore imageAvailableSemaphore;
 static std::vector<VkSemaphore> renderFinishedSemaphore;
 static VkFence inFlighFence;
-static VkImage textureImage;
-static VkDeviceMemory textureImageMemory;
-static VkSampler textureSampler;
-static VkImageView textureImageView;
 static VkDescriptorSetLayout descriptorSetLayout;
 static VkDescriptorPool descriptorPool;
-static VkDescriptorSet descriptorSet;
 static uint32_t currentImageIndex = 0;
 static std::unordered_map<int, bool> prevKeyState;
 
@@ -92,6 +87,14 @@ struct SwapChainSupportDetails {
   std::vector<VkPresentModeKHR> presentModes;
 };
 
+struct Texture {
+  VkImage image;
+  VkDeviceMemory memory;
+  VkImageView view;
+  VkSampler sampler;
+  VkDescriptorSet descriptorSet;
+};
+
 struct PushConstants {
   float offset[2];
   float halfSize[2];
@@ -106,6 +109,7 @@ static const std::vector<const char *> deviceExtensions = {
 
 static std::vector<VkImageView> swapChainImageViews;
 static const uint32_t TEX_SIZE = 8;
+static std::vector<Texture> textures;
 
 static uint32_t findMemoryType(uint32_t typeFilter,
                                VkMemoryPropertyFlags properties) {
@@ -516,8 +520,8 @@ static VkShaderModule createShaderModule(const std::vector<char> &code) {
 }
 
 static void createGraphicsPipeline() {
-  auto vertCode = readFile("shaders/quad.vert.spv");
-  auto fragCode = readFile("shaders/quad.frag.spv");
+  auto vertCode = readFile("engine/shaders/quad.vert.spv");
+  auto fragCode = readFile("engine/shaders/quad.frag.spv");
   VkShaderModule vert = createShaderModule(vertCode);
   VkShaderModule frag = createShaderModule(fragCode);
 
@@ -745,132 +749,6 @@ static void transitionImageLayout(VkCommandBuffer cmd, VkImage image,
   vkCmdPipelineBarrier2(cmd, &depInfo);
 }
 
-static void createTextureImage() {
-  int texWidth, texHeight, texChannels;
-  stbi_uc *pixels = stbi_load("textures/digits.png", &texWidth, &texHeight,
-                              &texChannels, STBI_rgb_alpha);
-
-  if (!pixels) {
-    printf("Failed to load texture image! (%s)\n", stbi_failure_reason());
-    exit(1);
-  }
-
-  VkDeviceSize imageSize = texWidth * texHeight * 4;
-  printf("Loaded PNG: %dx%d, %d channels\n", texWidth, texHeight, texChannels);
-
-  VkBuffer stagingBuffer;
-  VkDeviceMemory stagingMemory;
-  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               stagingBuffer, stagingMemory);
-
-  void *data;
-  vkMapMemory(device, stagingMemory, 0, imageSize, 0, &data);
-  memcpy(data, pixels, (size_t)imageSize);
-  vkUnmapMemory(device, stagingMemory);
-
-  stbi_image_free(pixels);
-
-  VkImageCreateInfo imageInfo{};
-  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-  imageInfo.imageType = VK_IMAGE_TYPE_2D;
-  imageInfo.extent.width = texWidth;
-  imageInfo.extent.height = texHeight;
-  imageInfo.extent.depth = 1;
-  imageInfo.mipLevels = 1;
-  imageInfo.arrayLayers = 1;
-  imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
-  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  imageInfo.usage =
-      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  if (vkCreateImage(device, &imageInfo, nullptr, &textureImage) != VK_SUCCESS) {
-    printf("Failed to create texture image!\n");
-    exit(1);
-  }
-
-  VkMemoryRequirements memReq;
-  vkGetImageMemoryRequirements(device, textureImage, &memReq);
-  VkMemoryAllocateInfo alloc{};
-  alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  alloc.allocationSize = memReq.size;
-  alloc.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits,
-                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-  vkAllocateMemory(device, &alloc, nullptr, &textureImageMemory);
-  vkBindImageMemory(device, textureImage, textureImageMemory, 0);
-
-  VkCommandBuffer cmd = beginSingleTimeCommands();
-  transitionImageLayout(
-      cmd, textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-      0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
-  VkBufferImageCopy region{};
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.layerCount = 1;
-  region.imageExtent = {(uint32_t)texWidth, (uint32_t)texHeight, 1};
-  vkCmdCopyBufferToImage(cmd, stagingBuffer, textureImage,
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-  transitionImageLayout(
-      cmd, textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-
-  endSingleTimeCommands(cmd);
-
-  vkDestroyBuffer(device, stagingBuffer, nullptr);
-  vkFreeMemory(device, stagingMemory, nullptr);
-
-  printf("Texture image created and upload (%ux%u checkboard).\n", TEX_SIZE,
-         TEX_SIZE);
-}
-
-static void createTextureImageView() {
-  VkImageViewCreateInfo info{};
-  info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  info.image = textureImage;
-  info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  info.format = VK_FORMAT_R8G8B8A8_UNORM;
-  info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  info.subresourceRange.levelCount = 1;
-  info.subresourceRange.layerCount = 1;
-
-  if (vkCreateImageView(device, &info, nullptr, &textureImageView) !=
-      VK_SUCCESS) {
-    printf("Failed to create texture image view!\n");
-    exit(1);
-  }
-  printf("Texture image view created.\n");
-}
-
-static void createTextureSampler() {
-  VkSamplerCreateInfo info{};
-  info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  info.magFilter = VK_FILTER_NEAREST;
-  info.minFilter = VK_FILTER_NEAREST;
-  info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  info.anisotropyEnable = VK_FALSE;
-  info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-  info.unnormalizedCoordinates = VK_FALSE;
-  info.compareEnable = VK_FALSE;
-  info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-
-  if (vkCreateSampler(device, &info, nullptr, &textureSampler) != VK_SUCCESS) {
-    printf("Failed to create texture sampler!\n");
-    exit(1);
-  }
-  printf("Texture sampler created.\n");
-}
-
 static void createDescriptorSetLayout() {
   VkDescriptorSetLayoutBinding samplerBinding{};
   samplerBinding.binding = 0;
@@ -895,13 +773,13 @@ static void createDescriptorSetLayout() {
 static void createDescriptorPool() {
   VkDescriptorPoolSize poolSize{};
   poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSize.descriptorCount = 1;
+  poolSize.descriptorCount = 64;
 
   VkDescriptorPoolCreateInfo info{};
   info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   info.poolSizeCount = 1;
   info.pPoolSizes = &poolSize;
-  info.maxSets = 1;
+  info.maxSets = 64;
 
   if (vkCreateDescriptorPool(device, &info, nullptr, &descriptorPool) !=
       VK_SUCCESS) {
@@ -909,36 +787,6 @@ static void createDescriptorPool() {
     exit(1);
   }
   printf("Descriptor pool created.\n");
-}
-
-static void createDescriptorSet() {
-  VkDescriptorSetAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = descriptorPool;
-  allocInfo.descriptorSetCount = 1;
-  allocInfo.pSetLayouts = &descriptorSetLayout;
-
-  if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) !=
-      VK_SUCCESS) {
-    printf("Failed to allocate descriptor set!\n");
-    exit(1);
-  }
-
-  VkDescriptorImageInfo imageInfo{};
-  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  imageInfo.imageView = textureImageView;
-  imageInfo.sampler = textureSampler;
-
-  VkWriteDescriptorSet write{};
-  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-  write.dstSet = descriptorSet;
-  write.dstBinding = 0;
-  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  write.descriptorCount = 1;
-  write.pImageInfo = &imageInfo;
-
-  vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
-  printf("Descriptor set created and pointed at the texture.\n");
 }
 
 static void createCommandPool() {
@@ -1026,11 +874,7 @@ void engineInit(int width, int height, const char *title) {
   createDescriptorSetLayout();
   createGraphicsPipeline();
   createCommandPool();
-  createTextureImage();
-  createTextureImageView();
-  createTextureSampler();
   createDescriptorPool();
-  createDescriptorSet();
   createCommandBuffer();
   createSyncObjects();
 
@@ -1040,10 +884,13 @@ void engineInit(int width, int height, const char *title) {
 void engineShutdown() {
   vkDeviceWaitIdle(device);
 
-  vkDestroySampler(device, textureSampler, nullptr);
-  vkDestroyImageView(device, textureImageView, nullptr);
-  vkDestroyImage(device, textureImage, nullptr);
-  vkFreeMemory(device, textureImageMemory, nullptr);
+  for (auto &tex : textures) {
+    vkDestroySampler(device, tex.sampler, nullptr);
+    vkDestroyImageView(device, tex.view, nullptr);
+    vkDestroyImage(device, tex.image, nullptr);
+    vkFreeMemory(device, tex.memory, nullptr);
+  }
+
   vkDestroyDescriptorPool(device, descriptorPool, nullptr);
   vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -1125,13 +972,23 @@ void engineBeginFrame() {
   scissor.offset = {0, 0};
   scissor.extent = swapChainExtent;
   vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 }
 
-static void drawInternal(float x, float y, float hw, float hh, float uvX,
-                         float uvY, float uvW, float uvH, int useTexture) {
+static void drawInternal(int texHandle, float x, float y, float hw, float hh,
+                         float uvX, float uvY, float uvW, float uvH,
+                         int useTexture) {
+  if (useTexture && texHandle >= 0 && texHandle < (int)textures.size()) {
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout, 0, 1,
+                            &textures[texHandle].descriptorSet, 0, nullptr);
+  } else if (!useTexture && (int)textures.size() > 0) {
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            pipelineLayout, 0, 1, &textures[0].descriptorSet, 0,
+                            nullptr);
+  } else {
+    printf("Need to have at least one Texture!\n");
+    exit(1);
+  }
   float aspect = (float)swapChainExtent.width / (float)swapChainExtent.height;
   auto proj = makeOrthoMatrix(aspect);
 
@@ -1158,12 +1015,12 @@ static void drawInternal(float x, float y, float hw, float hh, float uvX,
 }
 
 void drawQuad(float x, float y, float hw, float hh) {
-  drawInternal(x, y, hw, hh, 0, 0, 1, 1, 0);
+  drawInternal(-1, x, y, hw, hh, 0, 0, 1, 1, 0);
 }
 
-void drawSprite(float x, float y, float hw, float hh, float uvX, float uvY,
-                float uvW, float uvH) {
-  drawInternal(x, y, hw, hh, uvX, uvY, uvW, uvH, 1);
+void drawSprite(int handle, float x, float y, float hw, float hh, float uvX,
+                float uvY, float uvW, float uvH) {
+  drawInternal(handle, x, y, hw, hh, uvX, uvY, uvW, uvH, 1);
 }
 
 void engineEndFrame() {
@@ -1231,4 +1088,124 @@ bool isKeyPressed(int key) {
   bool wasDown = prevKeyState[key];
   prevKeyState[key] = down;
   return down && !wasDown;
+}
+
+int loadTexture(const char *path, Filter filter) {
+  Texture tex{};
+
+  int w, h, ch;
+  stbi_uc *pixels = stbi_load(path, &w, &h, &ch, STBI_rgb_alpha);
+  if (!pixels) {
+    printf("Failed to load texture: %s (%s)\n", path, stbi_failure_reason());
+    return -1;
+  }
+
+  VkDeviceSize imageSize = w * h * 4;
+
+  VkBuffer staging;
+  VkDeviceMemory staginMem;
+  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               staging, staginMem);
+
+  void *data;
+  vkMapMemory(device, staginMem, 0, imageSize, 0, &data);
+  memcpy(data, pixels, (size_t)imageSize);
+  vkUnmapMemory(device, staginMem);
+  stbi_image_free(pixels);
+
+  VkImageCreateInfo imageInfo{};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent = {(uint32_t)w, (uint32_t)h, 1};
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage =
+      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  vkCreateImage(device, &imageInfo, nullptr, &tex.image);
+
+  VkMemoryRequirements memReq;
+  vkGetImageMemoryRequirements(device, tex.image, &memReq);
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memReq.size;
+  allocInfo.memoryTypeIndex =
+      findMemoryType(memReq.memoryTypeBits, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
+  vkAllocateMemory(device, &allocInfo, nullptr, &tex.memory);
+  vkBindImageMemory(device, tex.image, tex.memory, 0);
+
+  VkCommandBuffer cmd = beginSingleTimeCommands();
+  transitionImageLayout(
+      cmd, tex.image, VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+      0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+  VkBufferImageCopy region{};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
+  vkCmdCopyBufferToImage(cmd, staging, tex.image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  transitionImageLayout(
+      cmd, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+  endSingleTimeCommands(cmd);
+  vkDestroyBuffer(device, staging, nullptr);
+  vkFreeMemory(device, staginMem, nullptr);
+
+  VkImageViewCreateInfo imageViewInfo{};
+  imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  imageViewInfo.image = tex.image;
+  imageViewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+  imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  imageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  imageViewInfo.subresourceRange.layerCount = 1;
+  imageViewInfo.subresourceRange.levelCount = 1;
+  vkCreateImageView(device, &imageViewInfo, nullptr, &tex.view);
+
+  VkSamplerCreateInfo samplerInfo{};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  VkFilter vkFilter =
+      (filter == Filter::Linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+  samplerInfo.magFilter = VK_FILTER_NEAREST;
+  samplerInfo.minFilter = VK_FILTER_NEAREST;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  vkCreateSampler(device, &samplerInfo, nullptr, &tex.sampler);
+
+  VkDescriptorSetAllocateInfo dsAlloc{};
+  dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  dsAlloc.descriptorPool = descriptorPool;
+  dsAlloc.descriptorSetCount = 1;
+  dsAlloc.pSetLayouts = &descriptorSetLayout;
+  vkAllocateDescriptorSets(device, &dsAlloc, &tex.descriptorSet);
+
+  VkDescriptorImageInfo imgInfo{};
+  imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  imgInfo.imageView = tex.view;
+  imgInfo.sampler = tex.sampler;
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = tex.descriptorSet;
+  write.dstBinding = 0;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.descriptorCount = 1;
+  write.pImageInfo = &imgInfo;
+  vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+  textures.push_back(tex);
+  int handle = (int)textures.size() - 1;
+  printf("Load texture [%d]: %s (%dx%d)\n", handle, path, w, h);
+  return handle;
 }

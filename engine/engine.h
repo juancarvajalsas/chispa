@@ -10,10 +10,13 @@ void enginePollEvents();
 void engineBeginFrame();
 void engineEndFrame();
 
+// --- Textures ---
+enum class Filter { Nearest, Linear };
+int loadTexture(const char *path, Filter filter = Filter::Linear);
 // --- Drawing ---
 void drawQuad(float x, float y, float halfW, float halfH);
-void drawSprite(float x, float y, float halfW, float halfH, float uvX,
-                float uvY, float uvW, float uvH);
+void drawSprite(int handle, float x, float y, float halfW, float halfH,
+                float uvX, float uvY, float uvW, float uvH);
 
 // --- Input ---
 bool isKeyDown(int key);

@@ -1,6 +1,6 @@
 #include "../engine/engine.h"
 #include <GLFW/glfw3.h>
-#include <cstdio>
+#include <chrono>
 
 const int GRID_W = 10;
 const int GRID_H = 20;
@@ -64,29 +64,121 @@ Piece makePiece(int type) {
   p.x = GRID_W / 2 - 1;
   p.y = 0;
 
-  switch(type) {
-    case 0: // I
-    case 1: // O (square)
-    case 2: // T
-    case 3: // S
-    case 4: // Z
-    case 5: // J
-    case 6: // L
+  switch (type) {
+  case 0: // I
+    p.cells[0][0] = 0;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 1;
+    p.cells[1][1] = 0;
+    p.cells[2][0] = 2;
+    p.cells[2][1] = 0;
+    p.cells[3][0] = 3;
+    p.cells[3][1] = 0;
+    break;
+  case 1: // O (square)
+    p.cells[0][0] = 0;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 1;
+    p.cells[1][1] = 0;
+    p.cells[2][0] = 0;
+    p.cells[2][1] = 1;
+    p.cells[3][0] = 1;
+    p.cells[3][1] = 1;
+    break;
+  case 2: // T
+    p.cells[0][0] = 0;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 1;
+    p.cells[1][1] = 0;
+    p.cells[2][0] = 2;
+    p.cells[2][1] = 0;
+    p.cells[3][0] = 1;
+    p.cells[3][1] = 1;
+    break;
+  case 3: // S
+    p.cells[0][0] = 1;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 2;
+    p.cells[1][1] = 0;
+    p.cells[2][0] = 0;
+    p.cells[2][1] = 1;
+    p.cells[3][0] = 1;
+    p.cells[3][1] = 1;
+    break;
+  case 4: // Z
+    p.cells[0][0] = 0;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 1;
+    p.cells[1][1] = 0;
+    p.cells[2][0] = 1;
+    p.cells[2][1] = 1;
+    p.cells[3][0] = 2;
+    p.cells[3][1] = 1;
+    break;
+  case 5: // J
+    p.cells[0][0] = 0;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 0;
+    p.cells[1][1] = 1;
+    p.cells[2][0] = 1;
+    p.cells[2][1] = 1;
+    p.cells[3][0] = 2;
+    p.cells[3][1] = 1;
+    break;
+  case 6: // L
+    p.cells[0][0] = 2;
+    p.cells[0][1] = 0;
+    p.cells[1][0] = 0;
+    p.cells[1][1] = 1;
+    p.cells[2][0] = 1;
+    p.cells[2][1] = 1;
+    p.cells[3][0] = 2;
+    p.cells[3][1] = 1;
+    break;
   }
   return p;
+}
+
+void drawPiece(const Piece &p) {
+  for (int i = 0; i < 4; i++) {
+    int col = p.x + p.cells[i][0];
+    int row = p.y + p.cells[i][1];
+    if (row >= 0 && row < GRID_H && col >= 0 && col < GRID_W) {
+      CellRect c = cellToScreen(col, row);
+      float uvX = p.color / 7.0f;
+      drawSprite(blocksTex, c.x, c.y, c.hw, c.hh, uvX, 0.0f, 1.0f / 7.0f, 1.0f);
+    }
+  }
+}
+
+bool canPlace(const Piece &p, int px, int py) {
+  for (int i = 0; i < 4; i++) {
+    int col = px + p.cells[i][0];
+    int row = py + p.cells[i][1];
+    if (col < 0 || col >= GRID_W || row < 0 || row >= GRID_H)
+      return false;
+    if (grid[row][col] >= 0)
+      return false;
+  }
+  return true;
+}
+
+void lockPiece(const Piece &p) {
+  for (int i = 0; i < 4; i++) {
+    int col = p.x + p.cells[i][0];
+    int row = p.y + p.cells[i][1];
+    if (row >= 0 && row < GRID_H && col >= 0 && col < GRID_W)
+      grid[row][col] = p.color;
+  }
 }
 
 int main() {
   engineInit(600, 800, "Tetris");
   blocksTex = loadTexture("tetris/textures/blocks.png", Filter::Nearest);
-
   clearGrid();
-  for (int col = 0; col < GRID_W; col++) {
-    grid[GRID_H - 1][col] = col % 7;
-  }
-  grid[0][0] = 0;
-  grid[5][5] = 3;
-  grid[10][2] = 4;
+
+  Piece current = makePiece(rand() % 7);
+  auto lastTime = std::chrono::high_resolution_clock::now();
 
   while (!engineShouldClose()) {
     enginePollEvents();
@@ -94,8 +186,33 @@ int main() {
       break;
     }
 
+    auto now = std::chrono::high_resolution_clock::now();
+    float dt = std::chrono::duration<float>(now - lastTime).count();
+    lastTime = now;
+
+    if (isKeyPressed(GLFW_KEY_LEFT) &&
+        canPlace(current, current.x - 1, current.y))
+      current.x -= 1;
+    if (isKeyPressed(GLFW_KEY_RIGHT) &&
+        canPlace(current, current.x + 1, current.y))
+      current.x += 1;
+
+    float interval = isKeyDown(GLFW_KEY_DOWN) ? 0.05f : fallInterval;
+
+    fallTimer += dt;
+    if (fallTimer >= interval) {
+      fallTimer = 0.0f;
+      if (canPlace(current, current.x, current.y + 1)) {
+        current.y += 1;
+      } else {
+        lockPiece(current);
+        current = makePiece(rand() % 7);
+      }
+    }
+
     engineBeginFrame();
     drawGrid();
+    drawPiece(current);
     engineEndFrame();
   }
   engineShutdown();

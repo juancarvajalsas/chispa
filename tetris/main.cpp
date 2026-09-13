@@ -151,6 +151,18 @@ void drawPiece(const Piece &p) {
   }
 }
 
+bool canPlacePiece(const Piece &p) {
+  for (int i = 0; i < 4; i++) {
+    int col = p.x + p.cells[i][0];
+    int row = p.y + p.cells[i][1];
+    if (col < 0 || col >= GRID_W || row < 0 || row >= GRID_H)
+      return false;
+    if (grid[row][col] >= 0)
+      return false;
+  }
+  return true;
+}
+
 bool canPlace(const Piece &p, int px, int py) {
   for (int i = 0; i < 4; i++) {
     int col = px + p.cells[i][0];
@@ -161,6 +173,18 @@ bool canPlace(const Piece &p, int px, int py) {
       return false;
   }
   return true;
+}
+
+Piece rotated(const Piece &p) {
+  Piece r = p;
+  for (int i = 0; i < 4; i++) {
+    int x = p.cells[i][0];
+    int y = p.cells[i][1];
+
+    r.cells[i][0] = -y;
+    r.cells[i][1] = x;
+  }
+  return r;
 }
 
 void lockPiece(const Piece &p) {
@@ -196,6 +220,12 @@ int main() {
     if (isKeyPressed(GLFW_KEY_RIGHT) &&
         canPlace(current, current.x + 1, current.y))
       current.x += 1;
+    if (isKeyPressed(GLFW_KEY_UP) && current.color != 1) {
+      Piece r = rotated(current);
+      if (canPlacePiece(r)) {
+        current = r;
+      }
+    }
 
     float interval = isKeyDown(GLFW_KEY_DOWN) ? 0.05f : fallInterval;
 

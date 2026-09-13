@@ -6,8 +6,17 @@ const int GRID_W = 10;
 const int GRID_H = 20;
 int grid[GRID_H][GRID_W];
 int blocksTex;
+float fallTimer = 0.0f;
+float fallInterval = 0.5f;
+
 struct CellRect {
   float x, y, hw, hh;
+};
+
+struct Piece {
+  int cells[4][2];
+  int color;
+  int x, y;
 };
 
 CellRect cellToScreen(int col, int row) {
@@ -47,6 +56,24 @@ void drawGrid() {
       }
     }
   }
+}
+
+Piece makePiece(int type) {
+  Piece p;
+  p.color = type;
+  p.x = GRID_W / 2 - 1;
+  p.y = 0;
+
+  switch(type) {
+    case 0: // I
+    case 1: // O (square)
+    case 2: // T
+    case 3: // S
+    case 4: // Z
+    case 5: // J
+    case 6: // L
+  }
+  return p;
 }
 
 int main() {

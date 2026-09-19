@@ -196,6 +196,36 @@ void lockPiece(const Piece &p) {
   }
 }
 
+int clearLines() {
+  int linesCleared = 0;
+
+  for (int row = GRID_H - 1; row >= 0; row--) {
+    bool full = true;
+    for (int col = 0; col < GRID_W; col++) {
+      if (grid[row][col] < 0) {
+        full = false;
+        break;
+      }
+    }
+
+    if (!full)
+      continue;
+
+    linesCleared++;
+    for (int r = row; r > 0; r--) {
+      for (int col = 0; col < GRID_W; col++) {
+        grid[r][col] = grid[r - 1][col];
+      }
+    }
+    for (int col = 0; col < GRID_W; col++) {
+      grid[0][col - 1] = -1;
+    }
+    row++;
+  }
+
+  return linesCleared;
+}
+
 int main() {
   engineInit(600, 800, "Tetris");
   blocksTex = loadTexture("tetris/textures/blocks.png", Filter::Nearest);
@@ -203,6 +233,8 @@ int main() {
 
   Piece current = makePiece(rand() % 7);
   auto lastTime = std::chrono::high_resolution_clock::now();
+  int score = 0;
+  int totalLines = 0;
 
   while (!engineShouldClose()) {
     enginePollEvents();
@@ -236,7 +268,20 @@ int main() {
         current.y += 1;
       } else {
         lockPiece(current);
+        int cleared = clearLines();
+        if (cleared > 0) {
+          totalLines += cleared;
+          score += cleared * 100;
+          printf("Cleared %d line(s)! Score: %d\n", cleared, score);
+        }
         current = makePiece(rand() % 7);
+
+        if (!canPlacePiece(current)) {
+          printf("GAME OVER! Final score: %d\n", score);
+          clearGrid();
+          score = 0;
+          totalLines = 0;
+        }
       }
     }
 

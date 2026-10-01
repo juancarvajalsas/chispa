@@ -12,6 +12,7 @@ layout(push_constant) uniform PushConstants {
   vec2 uvOffset;
   vec2 uvScale;
   int useTexture;
+  float angle;
 }
 pc;
 void main() {

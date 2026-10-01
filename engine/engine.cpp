@@ -106,6 +106,7 @@ struct PushConstants {
   float uvOffset[2];
   float uvScale[2];
   int useTexture;
+  float angle;
 };
 
 static const std::vector<const char *> deviceExtensions = {
@@ -585,7 +586,16 @@ static void createGraphicsPipeline() {
   colorBlendAttachment.colorWriteMask =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-  colorBlendAttachment.blendEnable = VK_FALSE;
+  colorBlendAttachment.blendEnable = VK_TRUE;
+  // color: src * srcAlpha + dst * (1 - srcAlpha)
+  colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  colorBlendAttachment.dstColorBlendFactor =
+      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+  // alpha channel itself: keep the source alpha
+  colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
   VkPipelineColorBlendStateCreateInfo colorBlending{};
   colorBlending.sType =
@@ -970,7 +980,7 @@ void engineBeginFrame() {
 
 static void drawInternal(int texHandle, float x, float y, float hw, float hh,
                          float uvX, float uvY, float uvW, float uvH,
-                         int useTexture) {
+                         int useTexture, float angle) {
   if (useTexture && texHandle >= 0 && texHandle < (int)textures.size()) {
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout, 0, 1,
@@ -992,6 +1002,7 @@ static void drawInternal(int texHandle, float x, float y, float hw, float hh,
   pc.halfSize[0] = hw;
   pc.halfSize[1] = hh;
   pc.useTexture = useTexture;
+  pc.angle = angle;
 
   for (int i = 0; i < 16; i++) {
     pc.proj[i] = proj[i];
@@ -1008,13 +1019,13 @@ static void drawInternal(int texHandle, float x, float y, float hw, float hh,
   vkCmdDraw(commandBuffer, 6, 1, 0, 0);
 }
 
-void drawQuad(float x, float y, float hw, float hh) {
-  drawInternal(-1, x, y, hw, hh, 0, 0, 1, 1, 0);
+void drawQuad(float x, float y, float hw, float hh, float angle) {
+  drawInternal(-1, x, y, hw, hh, 0, 0, 1, 1, 0, angle);
 }
 
 void drawSprite(int handle, float x, float y, float hw, float hh, float uvX,
-                float uvY, float uvW, float uvH) {
-  drawInternal(handle, x, y, hw, hh, uvX, uvY, uvW, uvH, 1);
+                float uvY, float uvW, float uvH, float angle) {
+  drawInternal(handle, x, y, hw, hh, uvX, uvY, uvW, uvH, 1, angle);
 }
 
 void engineEndFrame() {

@@ -3,6 +3,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -72,6 +75,7 @@ static VkDescriptorSetLayout descriptorSetLayout;
 static VkDescriptorPool descriptorPool;
 static uint32_t currentImageIndex = 0;
 static std::unordered_map<int, bool> prevKeyState;
+static VmaAllocator allocator;
 
 struct QueueFamilyIndices {
   std::optional<uint32_t> graphicsFamily;
@@ -89,7 +93,7 @@ struct SwapChainSupportDetails {
 
 struct Texture {
   VkImage image;
-  VkDeviceMemory memory;
+  VmaAllocation allocation;
   VkImageView view;
   VkSampler sampler;
   VkDescriptorSet descriptorSet;
@@ -111,19 +115,18 @@ static std::vector<VkImageView> swapChainImageViews;
 static const uint32_t TEX_SIZE = 8;
 static std::vector<Texture> textures;
 
-static uint32_t findMemoryType(uint32_t typeFilter,
-                               VkMemoryPropertyFlags properties) {
-  VkPhysicalDeviceMemoryProperties memProps;
-  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+static void createAllocator() {
+  VmaAllocatorCreateInfo info{};
+  info.physicalDevice = physicalDevice;
+  info.device = device;
+  info.instance = instance;
+  info.vulkanApiVersion = VK_API_VERSION_1_3;
 
-  for (uint32_t i = 0; i < memProps.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) &&
-        (memProps.memoryTypes[i].propertyFlags & properties) == properties) {
-      return i;
-    }
+  if (vmaCreateAllocator(&info, &allocator) != VK_SUCCESS) {
+    printf("Failed to create VWA allocator!\n");
+    exit(1);
   }
-  printf("Failed to find suitable memory type!\n");
-  exit(1);
+  printf("VMA allocator created.\n");
 }
 
 static std::array<float, 16> makeOrthoMatrix(float aspect) {
@@ -654,33 +657,23 @@ static void createGraphicsPipeline() {
 }
 
 static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
-                         VkMemoryPropertyFlags properties, VkBuffer &buffer,
-                         VkDeviceMemory &bufferMemory) {
+                         VmaMemoryUsage memUsage, VkBuffer &buffer,
+                         VmaAllocation &allocation) {
   VkBufferCreateInfo bufferInfo{};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = size;
   bufferInfo.usage = usage;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
-    printf("Failed to create buffer!\n");
+  VmaAllocationCreateInfo allocInfo{};
+  allocInfo.usage = memUsage;
+  allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+
+  if (vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &buffer, &allocation,
+                      nullptr) != VK_SUCCESS) {
+    printf("Failed to create buffer");
     exit(1);
   }
-
-  VkMemoryRequirements memReq;
-  vkGetBufferMemoryRequirements(device, buffer, &memReq);
-
-  VkMemoryAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocInfo.allocationSize = memReq.size;
-  allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, properties);
-
-  if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) !=
-      VK_SUCCESS) {
-    printf("Failed to allocate buffer memory!\n");
-    exit(1);
-  }
-  vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
 static std::vector<uint32_t> generateCheckerboard() {
@@ -869,6 +862,7 @@ void engineInit(int width, int height, const char *title) {
   createSurface();
   pickPhysicalDevice();
   createLogicalDevice();
+  createAllocator();
   createSwapChain();
   createImageViews();
   createDescriptorSetLayout();
@@ -887,8 +881,7 @@ void engineShutdown() {
   for (auto &tex : textures) {
     vkDestroySampler(device, tex.sampler, nullptr);
     vkDestroyImageView(device, tex.view, nullptr);
-    vkDestroyImage(device, tex.image, nullptr);
-    vkFreeMemory(device, tex.memory, nullptr);
+    vmaDestroyImage(allocator, tex.image, tex.allocation);
   }
 
   vkDestroyDescriptorPool(device, descriptorPool, nullptr);
@@ -908,6 +901,7 @@ void engineShutdown() {
   }
 
   vkDestroySwapchainKHR(device, swapChain, nullptr);
+  vmaDestroyAllocator(allocator);
   vkDestroyDevice(device, nullptr);
   vkDestroySurfaceKHR(instance, surface, nullptr);
   vkDestroyInstance(instance, nullptr);
@@ -1103,16 +1097,14 @@ int loadTexture(const char *path, Filter filter) {
   VkDeviceSize imageSize = w * h * 4;
 
   VkBuffer staging;
-  VkDeviceMemory staginMem;
+  VmaAllocation stagingAlloc;
   createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               staging, staginMem);
+               VMA_MEMORY_USAGE_AUTO, staging, stagingAlloc);
 
   void *data;
-  vkMapMemory(device, staginMem, 0, imageSize, 0, &data);
+  vmaMapMemory(allocator, stagingAlloc, &data);
   memcpy(data, pixels, (size_t)imageSize);
-  vkUnmapMemory(device, staginMem);
+  vmaUnmapMemory(allocator, stagingAlloc);
   stbi_image_free(pixels);
 
   VkImageCreateInfo imageInfo{};
@@ -1128,17 +1120,15 @@ int loadTexture(const char *path, Filter filter) {
       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  vkCreateImage(device, &imageInfo, nullptr, &tex.image);
 
-  VkMemoryRequirements memReq;
-  vkGetImageMemoryRequirements(device, tex.image, &memReq);
-  VkMemoryAllocateInfo allocInfo{};
-  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocInfo.allocationSize = memReq.size;
-  allocInfo.memoryTypeIndex =
-      findMemoryType(memReq.memoryTypeBits, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
-  vkAllocateMemory(device, &allocInfo, nullptr, &tex.memory);
-  vkBindImageMemory(device, tex.image, tex.memory, 0);
+  VmaAllocationCreateInfo imgAllocInfo{};
+  imgAllocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+
+  if (vmaCreateImage(allocator, &imageInfo, &imgAllocInfo, &tex.image,
+                     &tex.allocation, nullptr) != VK_SUCCESS) {
+    printf("Failed to create texture image (VMA)!\n");
+    exit(1);
+  }
 
   VkCommandBuffer cmd = beginSingleTimeCommands();
   transitionImageLayout(
@@ -1158,8 +1148,7 @@ int loadTexture(const char *path, Filter filter) {
       VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
   endSingleTimeCommands(cmd);
-  vkDestroyBuffer(device, staging, nullptr);
-  vkFreeMemory(device, staginMem, nullptr);
+  vmaDestroyBuffer(allocator, staging, stagingAlloc);
 
   VkImageViewCreateInfo imageViewInfo{};
   imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

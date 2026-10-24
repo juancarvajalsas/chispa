@@ -850,7 +850,13 @@ static void createSyncObjects() {
 }
 
 void engineInit(int width, int height, const char *title) {
+  glfwSetErrorCallback([](int code, const char* desc) {
+    printf("GLFW error %d: %s\n", code, desc);
+  });
+
+#ifdef __linux__
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+#endif
 
   if (!glfwInit()) {
     printf("glfwInit failed\n");

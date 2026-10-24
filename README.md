@@ -1,8 +1,8 @@
-# gamedev
+# Chispa
 
-A small 2D game engine written in C++20 on top of Vulkan, developed by
-**JuanCarvajal SAS**. It includes three games built with the engine: Pong,
-Tetris, and Asteroids (in progress).
+**Chispa** is a small 2D game engine written in C++20 on top of Vulkan,
+developed by **JuanCarvajal SAS**. This repository also includes three games
+built with Chispa: Pong, Tetris, and Asteroids (in progress).
 
 ## Features
 
@@ -16,7 +16,7 @@ Tetris, and Asteroids (in progress).
 ## Layout
 
 ```
-engine/      The engine (static library: engine.h / engine.cpp)
+engine/      Chispa (static library: engine.h / engine.cpp)
   shaders/   GLSL shaders, compiled to SPIR-V by the build
   third_party/  stb_image.h, vk_mem_alloc.h
 pong/        Pong

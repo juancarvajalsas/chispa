@@ -22,8 +22,8 @@ endforeach()
 add_custom_target(shaders DEPENDS ${SPV_OUTPUTS})
 
 # --- The engine as a library ---
-add_library(myengine STATIC engine.cpp)
-target_include_directories(myengine PUBLIC ${CMAKE_SOURCE_DIR} third_party)
-target_link_libraries(myengine PUBLIC Vulkan::Vulkan glfw)
-add_dependencies(myengine shaders)
+add_library(chispa STATIC engine.cpp)
+target_include_directories(chispa PUBLIC ${CMAKE_SOURCE_DIR} third_party)
+target_link_libraries(chispa PUBLIC Vulkan::Vulkan glfw)
+add_dependencies(chispa shaders)
 

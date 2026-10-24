@@ -1,0 +1,19 @@
+# Normalize line endings: LF in the repo, native on checkout.
+* text=auto
+
+# Source and build files
+*.cpp  text
+*.h    text
+*.vert text
+*.frag text
+*.comp text
+*.txt  text
+*.md   text
+
+# Shell scripts must keep LF, even on Windows
+*.sh   text eol=lf
+
+# Binary assets
+*.png  binary
+*.jpg  binary
+*.spv  binary

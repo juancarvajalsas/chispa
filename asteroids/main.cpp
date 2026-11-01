@@ -16,6 +16,23 @@ struct Ship {
   float angle = 0.0f;
 };
 
+void wrap(float &x, float &y, float radius) {
+  float halfW, halfH;
+  getWorldHalfSize(halfW, halfH);
+
+  float limitX = halfW + radius;
+  float limitY = halfH + radius;
+
+  if (x > limitX)
+    x -= 2.0f * limitX;
+  if (x < -limitX)
+    x += 2.0f * limitX;
+  if (y > limitY)
+    y -= 2.0f * limitY;
+  if (y < -limitY)
+    y += 2.0f * limitY;
+}
+
 int main() {
   engineInit(800, 800, "Asteroid");
   int shipTex = loadTexture("asteroids/textures/ship.png", Filter::Linear);
@@ -61,9 +78,7 @@ int main() {
 
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
-
-    if (isKeyPressed(GLFW_KEY_R))
-      ship = Ship{};
+    wrap(ship.x, ship.y, SHIP_SIZE);
 
     engineBeginFrame();
     if (thrusting && std::fmod(time, 0.1f) < 0.05f) {

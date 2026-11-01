@@ -9,6 +9,17 @@ const float THRUST = 1.5f;
 const float MAX_SPEED = 1.2f;
 const float DRAG = 0.6f;
 const float SHIP_SIZE = 0.06f;
+const int MAX_BULLETS = 8;
+const float BULLET_SPEED = 1.8f;
+const float BULLET_LIFE = 0.9;
+const float BULLET_SIZE = 0.008f;
+
+struct Bullet {
+  float x = 0, y = 0;
+  float vx = 0, vy = 0;
+  float life = 0;
+  bool alive = false;
+};
 
 struct Ship {
   float x = 0.0f, y = 0.0f;
@@ -37,6 +48,7 @@ int main() {
   engineInit(800, 800, "Asteroid");
   int shipTex = loadTexture("asteroids/textures/ship.png", Filter::Linear);
 
+  Bullet bullets[MAX_BULLETS];
   Ship ship;
   float time = 0.0f;
   auto lastTime = std::chrono::high_resolution_clock::now();
@@ -80,11 +92,42 @@ int main() {
     ship.y += ship.vy * dt;
     wrap(ship.x, ship.y, SHIP_SIZE);
 
+    if (isKeyPressed(GLFW_KEY_SPACE)) {
+      for (Bullet &b : bullets) {
+        if (!b.alive) {
+          b.alive = true;
+          b.life = BULLET_LIFE;
+          b.x = ship.x + fx * SHIP_SIZE;
+          b.y = ship.y + fy * SHIP_SIZE;
+          b.vx = ship.vx + fx * BULLET_SPEED;
+          b.vy = ship.vy + fy * BULLET_SPEED;
+          break;
+        }
+      }
+    }
+
+    for (Bullet &b : bullets) {
+      if (!b.alive)
+        continue;
+      b.life -= dt;
+      if (b.life <= 0.0f) {
+        b.alive = false;
+        continue;
+      }
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      wrap(b.x, b.y, BULLET_SIZE);
+    }
+
     engineBeginFrame();
     if (thrusting && std::fmod(time, 0.1f) < 0.05f) {
       float tailX = ship.x - fx * SHIP_SIZE * 1.1f;
       float tailY = ship.y - fy * SHIP_SIZE * 1.1f;
       drawQuad(tailX, tailY, 0.008f, 0.015f, ship.angle);
+    }
+    for (const Bullet &b : bullets) {
+      if (b.alive)
+        drawQuad(b.x, b.y, BULLET_SIZE, BULLET_SIZE);
     }
     drawSprite(shipTex, ship.x, ship.y, SHIP_SIZE, SHIP_SIZE, 0, 0, 1, 1,
                ship.angle);

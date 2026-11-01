@@ -850,7 +850,7 @@ static void createSyncObjects() {
 }
 
 void engineInit(int width, int height, const char *title) {
-  glfwSetErrorCallback([](int code, const char* desc) {
+  glfwSetErrorCallback([](int code, const char *desc) {
     printf("GLFW error %d: %s\n", code, desc);
   });
 
@@ -1099,6 +1099,12 @@ bool isKeyPressed(int key) {
   bool wasDown = prevKeyState[key];
   prevKeyState[key] = down;
   return down && !wasDown;
+}
+
+void getWorldHalfSize(float &halfW, float &halfH) {
+  float aspect = (float)swapChainExtent.width / (float)swapChainExtent.height;
+  halfW = aspect;
+  halfH = 1.0f;
 }
 
 int loadTexture(const char *path, Filter filter) {

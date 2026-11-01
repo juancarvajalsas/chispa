@@ -18,6 +18,8 @@ void drawQuad(float x, float y, float halfW, float halfH, float angle = 0.0f);
 void drawSprite(int handle, float x, float y, float halfW, float halfH,
                 float uvX, float uvY, float uvW, float uvH, float angle = 0.0f);
 
+void getWorldHalfSize(float &halfW, float &halfH);
+
 // --- Input ---
 bool isKeyDown(int key);
 bool isKeyPressed(int key);

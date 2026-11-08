@@ -48,6 +48,13 @@ struct Ship {
   float angle = 0.0f;
 };
 
+struct Game {
+  Ship ship;
+  Rock rocks[MAX_ROCKS];
+  Bullet bullets[MAX_BULLETS];
+  float time = 0.0f;
+};
+
 float randf(float lo, float hi) {
   std::uniform_real_distribution<float> d(lo, hi);
   return d(rng);
@@ -88,12 +95,7 @@ void wrap(float &x, float &y, float radius) {
     y += 2.0f * limitY;
 }
 
-int main() {
-  engineInit(800, 800, "Asteroid");
-  int shipTex = loadTexture("asteroids/textures/ship.png", Filter::Linear);
-  int rockTex = loadTexture("asteroids/textures/rock.png", Filter::Linear);
-
-  Rock rocks[MAX_ROCKS];
+void startWave(Game &g) {
   float halfW, halfH;
   getWorldHalfSize(halfW, halfH);
   for (int n = 0; n < START_ROCKS; n++) {
@@ -102,12 +104,17 @@ int main() {
       x = randf(-halfW, halfW);
       y = randf(-halfH, halfH);
     } while (x * x + y * y < 0.5f * 0.5f);
-    spawnRock(rocks, x, y, 0);
+    spawnRock(g.rocks, x, y, 0);
   }
+}
 
-  Bullet bullets[MAX_BULLETS];
-  Ship ship;
-  float time = 0.0f;
+int main() {
+  engineInit(800, 800, "Asteroid");
+  int shipTex = loadTexture("asteroids/textures/ship.png", Filter::Linear);
+  int rockTex = loadTexture("asteroids/textures/rock.png", Filter::Linear);
+
+  Game g;
+  startWave(g);
   auto lastTime = std::chrono::high_resolution_clock::now();
 
   while (!engineShouldClose()) {
@@ -119,51 +126,51 @@ int main() {
     float dt = std::chrono::duration<float>(now - lastTime).count();
     lastTime = now;
     dt = std::min(dt, 0.05f);
-    time += dt;
+    g.time += dt;
 
     if (isKeyDown(GLFW_KEY_LEFT))
-      ship.angle -= TURN_SPEED * dt;
+      g.ship.angle -= TURN_SPEED * dt;
     if (isKeyDown(GLFW_KEY_RIGHT))
-      ship.angle += TURN_SPEED * dt;
+      g.ship.angle += TURN_SPEED * dt;
 
-    float fx = std::sin(ship.angle);
-    float fy = -std::cos(ship.angle);
+    float fx = std::sin(g.ship.angle);
+    float fy = -std::cos(g.ship.angle);
 
     bool thrusting = isKeyDown(GLFW_KEY_UP);
     if (thrusting) {
-      ship.vx += fx * THRUST * dt;
-      ship.vy += fy * THRUST * dt;
+      g.ship.vx += fx * THRUST * dt;
+      g.ship.vy += fy * THRUST * dt;
     }
 
     float damp = std::pow(DRAG, dt);
-    ship.vx *= damp;
-    ship.vy *= damp;
+    g.ship.vx *= damp;
+    g.ship.vy *= damp;
 
-    float speed = std::sqrt(ship.vx * ship.vx + ship.vy * ship.vy);
+    float speed = std::sqrt(g.ship.vx * g.ship.vx + g.ship.vy * g.ship.vy);
     if (speed > MAX_SPEED) {
-      ship.vx = ship.vx / speed * MAX_SPEED;
-      ship.vy = ship.vy / speed * MAX_SPEED;
+      g.ship.vx = g.ship.vx / speed * MAX_SPEED;
+      g.ship.vy = g.ship.vy / speed * MAX_SPEED;
     }
 
-    ship.x += ship.vx * dt;
-    ship.y += ship.vy * dt;
-    wrap(ship.x, ship.y, SHIP_SIZE);
+    g.ship.x += g.ship.vx * dt;
+    g.ship.y += g.ship.vy * dt;
+    wrap(g.ship.x, g.ship.y, SHIP_SIZE);
 
     if (isKeyPressed(GLFW_KEY_SPACE)) {
-      for (Bullet &b : bullets) {
+      for (Bullet &b : g.bullets) {
         if (!b.alive) {
           b.alive = true;
           b.life = BULLET_LIFE;
-          b.x = ship.x + fx * SHIP_SIZE;
-          b.y = ship.y + fy * SHIP_SIZE;
-          b.vx = ship.vx + fx * BULLET_SPEED;
-          b.vy = ship.vy + fy * BULLET_SPEED;
+          b.x = g.ship.x + fx * SHIP_SIZE;
+          b.y = g.ship.y + fy * SHIP_SIZE;
+          b.vx = g.ship.vx + fx * BULLET_SPEED;
+          b.vy = g.ship.vy + fy * BULLET_SPEED;
           break;
         }
       }
     }
 
-    for (Bullet &b : bullets) {
+    for (Bullet &b : g.bullets) {
       if (!b.alive)
         continue;
       b.life -= dt;
@@ -176,7 +183,7 @@ int main() {
       wrap(b.x, b.y, BULLET_SIZE);
     }
 
-    for (Rock &r : rocks) {
+    for (Rock &r : g.rocks) {
       if (!r.alive)
         continue;
       r.x += r.vx * dt;
@@ -185,10 +192,10 @@ int main() {
       wrap(r.x, r.y, ROCK_RADIUS[r.size]);
     }
 
-    for (Bullet &b : bullets) {
+    for (Bullet &b : g.bullets) {
       if (!b.alive)
         continue;
-      for (Rock &r : rocks) {
+      for (Rock &r : g.rocks) {
         if (!r.alive)
           continue;
         float dx = b.x - r.x, dy = b.y - r.y;
@@ -198,47 +205,47 @@ int main() {
           r.alive = false;
           b.alive = false;
           if (dead.size < 2) {
-            spawnRock(rocks, dead.x, dead.y, dead.size + 1);
-            spawnRock(rocks, dead.x, dead.y, dead.size + 1);
+            spawnRock(g.rocks, dead.x, dead.y, dead.size + 1);
+            spawnRock(g.rocks, dead.x, dead.y, dead.size + 1);
           }
           break;
         }
       }
     }
 
-    for (const Rock &r : rocks) {
+    for (const Rock &r : g.rocks) {
       if (!r.alive)
         continue;
-      float dx = ship.x - r.x, dy = ship.y - r.y;
+      float dx = g.ship.x - r.x, dy = g.ship.y - r.y;
       float rad = ROCK_RADIUS[r.size] * HITBOX + SHIP_SIZE * 0.7f;
       if (dx * dx + dy * dy < rad * rad) {
-        ship = Ship{};
+        g.ship = Ship{};
         break;
       }
     }
 
     engineBeginFrame();
 
-    for (const Rock &r : rocks) {
+    for (const Rock &r : g.rocks) {
       if (!r.alive)
         continue;
       float s = ROCK_RADIUS[r.size];
       drawSprite(rockTex, r.x, r.y, s, s, 0, 0, 1, 1, r.angle);
     }
 
-    for (const Bullet &b : bullets) {
+    for (const Bullet &b : g.bullets) {
       if (b.alive)
         drawQuad(b.x, b.y, BULLET_SIZE, BULLET_SIZE);
     }
 
-    if (thrusting && std::fmod(time, 0.1f) < 0.05f) {
-      float tailX = ship.x - fx * SHIP_SIZE * 1.1f;
-      float tailY = ship.y - fy * SHIP_SIZE * 1.1f;
-      drawQuad(tailX, tailY, 0.008f, 0.015f, ship.angle);
+    if (thrusting && std::fmod(g.time, 0.1f) < 0.05f) {
+      float tailX = g.ship.x - fx * SHIP_SIZE * 1.1f;
+      float tailY = g.ship.y - fy * SHIP_SIZE * 1.1f;
+      drawQuad(tailX, tailY, 0.008f, 0.015f, g.ship.angle);
     }
 
-    drawSprite(shipTex, ship.x, ship.y, SHIP_SIZE, SHIP_SIZE, 0, 0, 1, 1,
-               ship.angle);
+    drawSprite(shipTex, g.ship.x, g.ship.y, SHIP_SIZE, SHIP_SIZE, 0, 0, 1, 1,
+               g.ship.angle);
 
     engineEndFrame();
   }
